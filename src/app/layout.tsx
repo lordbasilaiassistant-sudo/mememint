@@ -72,6 +72,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
             <div className="flex justify-center gap-4 mt-4 text-xs text-gray-500">
               <a href="https://x.com/THRYXAGI" target="_blank" className="hover:text-white transition-colors">Twitter</a>
+              <a href="https://www.geckoterminal.com/base/pools/0x5a86f04dbd3e6b532e4397eb605a4c23136dc913e0a60b65547842d2ce7876e8" target="_blank" className="hover:text-white transition-colors">CoinGecko</a>
               <a href="https://dexscreener.com/base/0x5a86f04dbd3e6b532e4397eb605a4c23136dc913e0a60b65547842d2ce7876e8" target="_blank" className="hover:text-white transition-colors">DexScreener</a>
               <span>Powered by $THRYX on Base</span>
             </div>
