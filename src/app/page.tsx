@@ -53,11 +53,46 @@ export default function Home() {
   const [error, setError] = useState("");
   const [deployResult, setDeployResult] = useState<DeployResult | null>(null);
 
+  // Image source mode: "ai" | "upload" | "url"
+  const [imageMode, setImageMode] = useState<"ai" | "upload" | "url">("ai");
+  const [imageUrlInput, setImageUrlInput] = useState("");
+  const [uploadLoading, setUploadLoading] = useState(false);
+
   // Wallet
   const { wallet, pro, connect, disconnect, showPicker, setShowPicker, walletOptions, connectWithProvider } = useThryxAuth();
   const [manualWallet, setManualWallet] = useState("");
 
   const effectiveWallet = wallet || manualWallet;
+
+  // Handle file upload
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadLoading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/upload-image", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setImageBase64(data.base64);
+      setImagePublicUrl(data.publicUrl);
+      if (data.warning) console.warn(data.warning);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploadLoading(false);
+      e.target.value = "";
+    }
+  };
+
+  // Handle manual URL input
+  const applyImageUrl = () => {
+    if (!imageUrlInput.trim()) return;
+    setImageBase64(imageUrlInput.trim());
+    setImagePublicUrl(imageUrlInput.trim());
+  };
 
   const updateField = useCallback((field: keyof TokenData, value: string) => {
     setTokenData((prev) => prev ? { ...prev, [field]: value } : prev);
@@ -383,9 +418,9 @@ export default function Home() {
             <div className="glass p-6 mb-6">
               {/* Token Preview Header */}
               <div className="flex items-start gap-5 mb-6">
-                {/* Image */}
+                {/* Image preview */}
                 <div className="shrink-0">
-                  {imgLoading ? (
+                  {(imgLoading || uploadLoading) ? (
                     <div className="w-24 h-24 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
                       <div className="w-8 h-8 border-2 border-[#39ff14] border-t-transparent rounded-full animate-spin" />
                     </div>
@@ -393,20 +428,17 @@ export default function Home() {
                     <div className="relative group">
                       <img src={imageBase64} alt={tokenData.name} className="w-24 h-24 rounded-2xl object-cover border border-white/10" />
                       <button
-                        onClick={() => generateImage()}
+                        onClick={() => { setImageBase64(null); setImagePublicUrl(null); }}
                         className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl flex items-center justify-center text-xs font-medium"
                       >
-                        🔄 Regen
+                        ✕ Remove
                       </button>
                     </div>
                   ) : (
-                    <button
-                      onClick={() => generateImage()}
-                      className="w-24 h-24 rounded-2xl bg-white/5 border border-dashed border-white/20 flex flex-col items-center justify-center text-xs text-gray-500 hover:border-[#39ff14]/40 transition"
-                    >
-                      <span className="text-2xl mb-1">🎨</span>
-                      Generate Logo
-                    </button>
+                    <div className="w-24 h-24 rounded-2xl bg-white/5 border border-dashed border-white/20 flex flex-col items-center justify-center text-xs text-gray-500">
+                      <span className="text-2xl mb-1">🖼️</span>
+                      No logo
+                    </div>
                   )}
                 </div>
 
@@ -430,6 +462,90 @@ export default function Home() {
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Image Source Selector */}
+              <div className="mb-5">
+                <label className="text-xs text-gray-500 mb-2 block">Token Logo</label>
+                <div className="flex gap-2 mb-3">
+                  {(["upload", "ai", "url"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => setImageMode(mode)}
+                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium border transition-all ${
+                        imageMode === mode
+                          ? "border-[#39ff14]/60 bg-[#39ff14]/10 text-[#39ff14]"
+                          : "border-white/10 bg-white/5 text-gray-400 hover:border-white/20"
+                      }`}
+                    >
+                      {mode === "upload" ? "📁 Upload" : mode === "ai" ? "🤖 AI Generate" : "🔗 Paste URL"}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Upload */}
+                {imageMode === "upload" && (
+                  <label className={`flex items-center justify-center gap-3 w-full p-4 rounded-xl border-2 border-dashed cursor-pointer transition-all ${
+                    uploadLoading ? "border-white/10 opacity-50" : "border-white/20 hover:border-[#39ff14]/40 hover:bg-[#39ff14]/5"
+                  }`}>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/gif,image/webp"
+                      className="hidden"
+                      onChange={handleImageUpload}
+                      disabled={uploadLoading}
+                    />
+                    {uploadLoading ? (
+                      <span className="text-sm text-gray-400">Uploading...</span>
+                    ) : (
+                      <>
+                        <span className="text-2xl">📁</span>
+                        <div>
+                          <p className="text-sm font-medium">Click to upload your logo</p>
+                          <p className="text-xs text-gray-500">JPG, PNG, GIF, WEBP — max 5MB</p>
+                        </div>
+                      </>
+                    )}
+                  </label>
+                )}
+
+                {/* AI Generate */}
+                {imageMode === "ai" && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => generateImage()}
+                      disabled={imgLoading}
+                      className="flex-1 py-2.5 px-4 rounded-xl bg-white/5 border border-white/10 hover:border-[#39ff14]/40 text-sm transition-all disabled:opacity-50"
+                    >
+                      {imgLoading ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <span className="w-4 h-4 border-2 border-[#39ff14] border-t-transparent rounded-full animate-spin" />
+                          Generating...
+                        </span>
+                      ) : imageBase64 ? "🔄 Regenerate Logo" : "🤖 Generate Logo with AI"}
+                    </button>
+                  </div>
+                )}
+
+                {/* URL paste */}
+                {imageMode === "url" && (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={imageUrlInput}
+                      onChange={(e) => setImageUrlInput(e.target.value)}
+                      placeholder="https://example.com/logo.png"
+                      className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
+                    />
+                    <button
+                      onClick={applyImageUrl}
+                      disabled={!imageUrlInput.trim()}
+                      className="px-4 py-2 rounded-lg bg-[#39ff14]/10 border border-[#39ff14]/30 text-[#39ff14] text-sm hover:bg-[#39ff14]/20 transition disabled:opacity-40"
+                    >
+                      Use
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Editable Fields */}
@@ -464,21 +580,14 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Regenerate buttons */}
+              {/* Regenerate text only */}
               <div className="flex gap-2 mt-4">
                 <button
                   onClick={() => generate(idea)}
                   className="btn-secondary text-xs py-2 px-3"
                   disabled={genLoading}
                 >
-                  {genLoading ? "..." : "🔄 Regenerate All"}
-                </button>
-                <button
-                  onClick={() => generateImage()}
-                  className="btn-secondary text-xs py-2 px-3"
-                  disabled={imgLoading}
-                >
-                  {imgLoading ? "..." : "🎨 New Logo"}
+                  {genLoading ? "..." : "🔄 Regenerate Text"}
                 </button>
               </div>
             </div>
