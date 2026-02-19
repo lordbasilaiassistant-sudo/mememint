@@ -1,103 +1,127 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const HF_TOKEN = process.env.HF_TOKEN;
-const HF_MODEL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell";
+// Deterministic SVG logo generation - no external APIs needed
+function hashCode(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
 
-export async function POST(req: NextRequest) {
-  if (!HF_TOKEN) {
-    return NextResponse.json({ error: "Image generation not configured" }, { status: 500 });
+function hslToHex(h: number, s: number, l: number): string {
+  l /= 100;
+  const a = s * Math.min(l, 1 - l) / 100;
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+function generateSVG(name: string, symbol: string): string {
+  const hash = hashCode(name + symbol);
+  const hue1 = hash % 360;
+  const hue2 = (hue1 + 120 + (hash % 60)) % 360;
+  const color1 = hslToHex(hue1, 70, 55);
+  const color2 = hslToHex(hue2, 65, 45);
+  const bgColor = hslToHex(hue1, 20, 12);
+
+  const initials = (symbol || name).slice(0, 3).toUpperCase();
+
+  // Pick a geometric pattern based on hash
+  const pattern = hash % 5;
+  let shapes = "";
+
+  switch (pattern) {
+    case 0: // Circles
+      shapes = `
+        <circle cx="256" cy="200" r="120" fill="${color1}" opacity="0.3"/>
+        <circle cx="256" cy="220" r="90" fill="${color2}" opacity="0.4"/>
+      `;
+      break;
+    case 1: // Diamond
+      shapes = `
+        <polygon points="256,80 376,230 256,380 136,230" fill="${color1}" opacity="0.3"/>
+        <polygon points="256,130 336,230 256,330 176,230" fill="${color2}" opacity="0.4"/>
+      `;
+      break;
+    case 2: // Hexagon
+      shapes = `
+        <polygon points="256,90 366,155 366,285 256,350 146,285 146,155" fill="${color1}" opacity="0.3"/>
+        <polygon points="256,130 336,175 336,265 256,310 176,265 176,175" fill="${color2}" opacity="0.4"/>
+      `;
+      break;
+    case 3: // Stacked bars
+      shapes = `
+        <rect x="106" y="140" width="300" height="50" rx="25" fill="${color1}" opacity="0.3"/>
+        <rect x="136" y="210" width="240" height="50" rx="25" fill="${color2}" opacity="0.4"/>
+        <rect x="166" y="280" width="180" height="50" rx="25" fill="${color1}" opacity="0.3"/>
+      `;
+      break;
+    case 4: // Triangle
+      shapes = `
+        <polygon points="256,80 406,350 106,350" fill="${color1}" opacity="0.3"/>
+        <polygon points="256,150 356,330 156,330" fill="${color2}" opacity="0.4"/>
+      `;
+      break;
   }
 
-  const { name, symbol, description } = await req.json();
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+    <defs>
+      <radialGradient id="bg" cx="50%" cy="50%" r="70%">
+        <stop offset="0%" stop-color="${color1}" stop-opacity="0.15"/>
+        <stop offset="100%" stop-color="${bgColor}"/>
+      </radialGradient>
+    </defs>
+    <rect width="512" height="512" rx="64" fill="url(#bg)"/>
+    ${shapes}
+    <text x="256" y="270" text-anchor="middle" dominant-baseline="middle"
+      font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="96"
+      fill="white" letter-spacing="4">${initials}</text>
+    <circle cx="256" cy="256" r="200" fill="none" stroke="${color1}" stroke-width="3" opacity="0.2"/>
+  </svg>`;
+}
+
+export async function POST(req: NextRequest) {
+  const { name, symbol } = await req.json();
   if (!name) {
     return NextResponse.json({ error: "Token name required" }, { status: 400 });
   }
 
-  const prompt = `A clean, vibrant meme token logo for a cryptocurrency called "${name}" ($${symbol || "TOKEN"}). ${description || ""}. Circular coin design, bold colors, playful cartoon style, crypto meme aesthetic, centered composition, flat design, no text, no letters, no words, solid color background, high quality icon, mascot character`;
+  const svg = generateSVG(name, symbol || "");
+  const base64 = Buffer.from(svg).toString("base64");
+  const dataUri = `data:image/svg+xml;base64,${base64}`;
 
+  // Try to upload SVG to catbox.moe for a public URL
+  let publicUrl: string | null = null;
   try {
-    const hfRes = await fetch(HF_MODEL, {
+    const catboxForm = new FormData();
+    catboxForm.append("reqtype", "fileupload");
+    catboxForm.append(
+      "fileToUpload",
+      new Blob([svg], { type: "image/svg+xml" }),
+      `${(symbol || "token").toLowerCase()}_logo.svg`
+    );
+    const catboxRes = await fetch("https://catbox.moe/user/api.php", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${HF_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs: prompt,
-        parameters: {
-          num_inference_steps: 4,
-          width: 512,
-          height: 512,
-        },
-      }),
+      body: catboxForm,
     });
-
-    if (!hfRes.ok) {
-      const errText = await hfRes.text();
-      console.error("HuggingFace error:", hfRes.status, errText);
-      if (hfRes.status === 503) {
-        return NextResponse.json(
-          { error: "Image model is warming up. Please try again in ~20 seconds.", loading: true },
-          { status: 503 }
-        );
-      }
-      return NextResponse.json({ error: "Image generation failed" }, { status: 502 });
-    }
-
-    const imageBuffer = Buffer.from(await hfRes.arrayBuffer());
-    const base64 = imageBuffer.toString("base64");
-
-    // Upload to imgbb for a permanent public URL (free, no account needed for anon uploads)
-    let publicUrl: string | null = null;
-    try {
-      const imgbbKey = process.env.IMGBB_API_KEY;
-      if (imgbbKey) {
-        const formData = new URLSearchParams();
-        formData.append("key", imgbbKey);
-        formData.append("image", base64);
-        formData.append("name", `${symbol || "token"}_logo`);
-
-        const uploadRes = await fetch("https://api.imgbb.com/1/upload", {
-          method: "POST",
-          body: formData,
-        });
-        if (uploadRes.ok) {
-          const uploadData = await uploadRes.json();
-          publicUrl = uploadData.data?.url || uploadData.data?.display_url || null;
-        }
-      }
-    } catch (e) {
-      console.error("imgbb upload error:", e);
-    }
-
-    // Fallback: use catbox.moe (anonymous, no key needed)
-    if (!publicUrl) {
-      try {
-        const catboxForm = new FormData();
-        catboxForm.append("reqtype", "fileupload");
-        catboxForm.append("fileToUpload", new Blob([imageBuffer], { type: "image/png" }), `${symbol || "token"}.png`);
-        
-        const catboxRes = await fetch("https://catbox.moe/user/api.php", {
-          method: "POST",
-          body: catboxForm,
-        });
-        if (catboxRes.ok) {
-          const catboxUrl = await catboxRes.text();
-          if (catboxUrl.startsWith("http")) {
-            publicUrl = catboxUrl.trim();
-          }
-        }
-      } catch (e) {
-        console.error("catbox upload error:", e);
+    if (catboxRes.ok) {
+      const catboxUrl = await catboxRes.text();
+      if (catboxUrl.startsWith("http")) {
+        publicUrl = catboxUrl.trim();
       }
     }
-
-    return NextResponse.json({
-      base64: `data:image/png;base64,${base64}`,
-      publicUrl,
-    });
   } catch (e) {
-    console.error("Image generation error:", e);
-    return NextResponse.json({ error: "Failed to generate image" }, { status: 500 });
+    console.error("catbox upload error:", e);
   }
+
+  return NextResponse.json({
+    base64: dataUri,
+    publicUrl,
+  });
 }
