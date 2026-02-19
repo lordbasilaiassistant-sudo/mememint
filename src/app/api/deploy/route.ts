@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
       : `Set fee recipient to ${walletAddress}`,
   ].filter(Boolean).join(". ") + ".";
 
-  console.log("Bankr deploy prompt:", prompt);
+  console.log("Bankr deploy prompt:", parts);
 
   try {
     const submitRes = await fetch(`${BANKR_API_URL}/agent/prompt`, {
