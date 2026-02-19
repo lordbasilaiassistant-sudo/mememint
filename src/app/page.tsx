@@ -47,6 +47,12 @@ export default function Home() {
   const [imagePreview, setImagePreview] = useState<string | null>(null); // always a displayable src (data URI or https URL)
   const [imagePublicUrl, setImagePublicUrl] = useState<string | null>(null); // public https URL for Bankr
 
+  // Optional advanced fields
+  const [website, setWebsite] = useState("");
+  const [tweet, setTweet] = useState("");
+  const [twitter, setTwitter] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   // Image mode
   const [imageMode, setImageMode] = useState<ImageMode>("ai");
   const [imageUrlInput, setImageUrlInput] = useState("");
@@ -217,6 +223,9 @@ export default function Home() {
           description: token.description || token.tagline || undefined,
           imageUrl: imagePublicUrl || undefined,
           walletAddress: effectiveWallet,
+          website: website.trim() || undefined,
+          tweet: tweet.trim() || undefined,
+          twitter: twitter.trim() || undefined,
         }),
       });
       const submitData = await res.json();
@@ -530,6 +539,58 @@ export default function Home() {
                   {manualWallet && !/^0x[a-fA-F0-9]{40}$/.test(manualWallet) && (
                     <p className="text-xs text-red-400">Must be a valid 0x address</p>
                   )}
+                </div>
+              )}
+            </div>
+
+            {/* ── Advanced (optional) ── */}
+            <div className="mb-4">
+              <button
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl border border-white/10 bg-white/5 text-xs text-gray-400 hover:text-white transition-all"
+              >
+                <span>⚙️ Advanced options <span className="text-gray-600">(website, tweet, Twitter handle)</span></span>
+                <span className={`transition-transform ${showAdvanced ? "rotate-180" : ""}`}>▾</span>
+              </button>
+
+              {showAdvanced && (
+                <div className="glass p-4 mt-1 space-y-3 rounded-xl border border-white/10">
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">🌐 Project Website <span className="text-gray-600">(optional — shows on Bankr launch page)</span></label>
+                    <input
+                      type="text"
+                      value={website}
+                      onChange={(e) => setWebsite(e.target.value)}
+                      placeholder="https://yoursite.com"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">🐦 Associated Tweet URL <span className="text-gray-600">(optional — adds social proof)</span></label>
+                    <input
+                      type="text"
+                      value={tweet}
+                      onChange={(e) => setTweet(e.target.value)}
+                      placeholder="https://x.com/you/status/..."
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">
+                      𝕏 Twitter/X Handle for Fees <span className="text-gray-600">(optional — route fees to your X account instead of wallet)</span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">@</span>
+                      <input
+                        type="text"
+                        value={twitter}
+                        onChange={(e) => setTwitter(e.target.value.replace(/^@/, ""))}
+                        placeholder="yourhandle"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-7 pr-3 py-2 text-xs font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
+                      />
+                    </div>
+                    <p className="text-xs text-gray-600 mt-1">If set, overrides wallet address for fee routing. Claim fees at bankr.bot with your X account.</p>
+                  </div>
                 </div>
               )}
             </div>

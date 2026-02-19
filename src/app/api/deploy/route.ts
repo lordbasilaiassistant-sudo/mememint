@@ -31,7 +31,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Deploy limit reached (5/day). Come back tomorrow!" }, { status: 429 });
   }
 
-  const { name, symbol, description, imageUrl, walletAddress } = await req.json();
+  const {
+    name,
+    symbol,
+    description,
+    imageUrl,
+    walletAddress,
+    website,   // optional: project website URL
+    tweet,     // optional: associated tweet URL for social proof
+    twitter,   // optional: @handle for fee routing via X
+  } = await req.json();
 
   if (!name || typeof name !== "string" || name.trim().length < 2) {
     return NextResponse.json({ error: "Token name required (2+ chars)" }, { status: 400 });
@@ -43,15 +52,24 @@ export async function POST(req: NextRequest) {
 
   const image = imageUrl || `https://picsum.photos/seed/${encodeURIComponent(name)}/500/500`;
   const desc = description || `${name} — deployed on Base via MemeMint`;
+  const siteUrl = website?.trim() || "https://thryx.mom";
 
-  const prompt = [
+  // Build prompt with all available Bankr params embedded as natural language
+  // Bankr parses: name, symbol, image, website, tweet, fee recipient, fee-type
+  const parts = [
     `Deploy a token on Base called ${name.trim()}`,
     symbol ? `with symbol ${symbol.trim()}` : "",
     `with image ${image}`,
-    `Description: ${desc.slice(0, 200)}`,
-    `Set fee recipient to ${walletAddress}`,
-    `Website: https://thryx.mom`,
+    `with website ${siteUrl}`,
+    tweet?.trim() ? `with tweet ${tweet.trim()}` : "",
+    desc ? `Description: ${desc.slice(0, 200)}` : "",
+    // Fee routing: prefer twitter handle if provided, else wallet address
+    twitter?.trim()
+      ? `Set fee recipient to ${twitter.trim()} via X`
+      : `Set fee recipient to ${walletAddress}`,
   ].filter(Boolean).join(". ") + ".";
+
+  console.log("Bankr deploy prompt:", prompt);
 
   try {
     const submitRes = await fetch(`${BANKR_API_URL}/agent/prompt`, {
@@ -60,7 +78,7 @@ export async function POST(req: NextRequest) {
         "X-API-Key": BANKR_API_KEY,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt: parts }),
     });
 
     if (!submitRes.ok) {
@@ -77,7 +95,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid deploy response" }, { status: 502 });
     }
 
-    // Return immediately with jobId — client will poll /api/deploy/status
     return NextResponse.json({
       submitted: true,
       jobId,
