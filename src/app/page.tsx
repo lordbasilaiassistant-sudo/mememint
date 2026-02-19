@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import ConnectWallet, { useThryxAuth, WalletPickerModal } from "@/components/ConnectWallet";
 import { getDailyUsage, incrementDailyUsage } from "@/lib/thryx-auth";
 
@@ -19,7 +19,8 @@ interface DeployResult {
   feeRecipient: string;
 }
 
-type Step = "idea" | "review" | "deploy" | "success";
+type Step = "build" | "success";
+type ImageMode = "upload" | "ai" | "url";
 
 const themes = [
   { label: "🐕 Dog Coin", idea: "a funny dog-themed meme coin" },
@@ -27,157 +28,115 @@ const themes = [
   { label: "🌙 Moon Shot", idea: "a moon-themed rocket fuel token" },
   { label: "🍔 Food Coin", idea: "a delicious fast food meme token" },
   { label: "🤖 AI Agent", idea: "an AI agent that trades for you" },
-  { label: "💀 Degen Play", idea: "the most degen token on Base" },
+  { label: "💀 Degen", idea: "the most degen token on Base" },
   { label: "🎮 Gaming", idea: "a retro gaming meme token" },
   { label: "👽 Alien", idea: "an alien invasion crypto meme" },
 ];
 
 const FREE_GEN_LIMIT = 5;
 
-export default function Home() {
-  const [step, setStep] = useState<Step>("idea");
-  const [idea, setIdea] = useState("");
+const emptyToken = (): TokenData => ({
+  name: "", symbol: "", description: "", tagline: "", twitterBio: "",
+});
 
-  // Token data (editable)
-  const [tokenData, setTokenData] = useState<TokenData | null>(null);
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
-  const [imagePublicUrl, setImagePublicUrl] = useState<string | null>(null);
+export default function Home() {
+  const [step, setStep] = useState<Step>("build");
+
+  // Token data — user edits directly
+  const [token, setToken] = useState<TokenData>(emptyToken());
+  const [imagePreview, setImagePreview] = useState<string | null>(null); // always a displayable src (data URI or https URL)
+  const [imagePublicUrl, setImagePublicUrl] = useState<string | null>(null); // public https URL for Bankr
+
+  // Image mode
+  const [imageMode, setImageMode] = useState<ImageMode>("ai");
+  const [imageUrlInput, setImageUrlInput] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Loading states
-  const [genLoading, setGenLoading] = useState(false);
-  const [imgLoading, setImgLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);    // AI text gen
+  const [imgLoading, setImgLoading] = useState(false);   // AI image gen
+  const [uploadLoading, setUploadLoading] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [deployStatus, setDeployStatus] = useState("");
 
-  // Results and errors
+  // Errors + result
   const [error, setError] = useState("");
   const [deployResult, setDeployResult] = useState<DeployResult | null>(null);
-
-  // Image source mode: "ai" | "upload" | "url"
-  const [imageMode, setImageMode] = useState<"ai" | "upload" | "url">("ai");
-  const [imageUrlInput, setImageUrlInput] = useState("");
-  const [uploadLoading, setUploadLoading] = useState(false);
 
   // Wallet
   const { wallet, pro, connect, disconnect, showPicker, setShowPicker, walletOptions, connectWithProvider } = useThryxAuth();
   const [manualWallet, setManualWallet] = useState("");
-
   const effectiveWallet = wallet || manualWallet;
 
-  // Handle file upload
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploadLoading(true);
-    setError("");
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/upload-image", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Upload failed");
-      setImageBase64(data.base64);
-      setImagePublicUrl(data.publicUrl);
-      if (data.warning) console.warn(data.warning);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setUploadLoading(false);
-      e.target.value = "";
-    }
-  };
-
-  // Handle manual URL input
-  const applyImageUrl = () => {
-    if (!imageUrlInput.trim()) return;
-    setImageBase64(imageUrlInput.trim());
-    setImagePublicUrl(imageUrlInput.trim());
-  };
-
   const updateField = useCallback((field: keyof TokenData, value: string) => {
-    setTokenData((prev) => prev ? { ...prev, [field]: value } : prev);
+    setToken((prev) => ({ ...prev, [field]: value }));
   }, []);
 
-  // Step 1: Generate token concept
-  const generate = async (inputIdea?: string) => {
-    const concept = inputIdea || idea;
-    if (!concept.trim()) return;
+  // ── AI text fill (OPTIONAL) ──────────────────────────────
+  const aiGenerate = async (inputIdea?: string) => {
+    const concept = inputIdea || `${token.name} ${token.description}`.trim();
+    if (!concept) { setError("Enter a name or description first, or pick a theme"); return; }
 
     if (!pro) {
       const usage = getDailyUsage("mememint_gens");
       if (usage >= FREE_GEN_LIMIT) {
-        setError(`Daily limit reached (${FREE_GEN_LIMIT}/day). Connect as Pro for unlimited!`);
+        setError(`AI limit reached (${FREE_GEN_LIMIT}/day free). Connect wallet for more.`);
         return;
       }
     }
 
-    setGenLoading(true);
+    setAiLoading(true);
     setError("");
-    setTokenData(null);
-    setImageBase64(null);
-    setImagePublicUrl(null);
-    setDeployResult(null);
-
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ idea: concept }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Generation failed");
-      }
       const data = await res.json();
-      setTokenData(data);
+      if (!res.ok) throw new Error(data.error || "AI generation failed");
+      setToken(data);
       if (!pro) incrementDailyUsage("mememint_gens");
-      setStep("review");
-
-      // Auto-generate image
-      generateImage(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong");
+      setError(e instanceof Error ? e.message : "AI fill failed");
     } finally {
-      setGenLoading(false);
+      setAiLoading(false);
     }
   };
 
-  // Step 2: Generate image
-  const generateImage = async (data?: TokenData) => {
-    const token = data || tokenData;
-    if (!token) return;
-
+  // ── AI image gen — always uses current token name + description ──
+  const aiGenImage = async () => {
+    if (!token.name && !token.description) {
+      setError("Enter a token name or description before generating an image");
+      return;
+    }
     setImgLoading(true);
-    setImageBase64(null);
+    setImagePreview(null);
     setImagePublicUrl(null);
-
+    setError("");
     try {
       const res = await fetch("/api/generate-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: token.name,
-          symbol: token.symbol,
-          description: token.description,
+          name: token.name || "Token",
+          symbol: token.symbol || "TKN",
+          description: token.description || token.tagline || "",
         }),
       });
 
       if (res.status === 503) {
-        // Model loading, retry once after delay
-        await new Promise((r) => setTimeout(r, 15000));
+        // Model warming — retry once
+        await new Promise((r) => setTimeout(r, 20000));
         const retry = await fetch("/api/generate-image", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: token.name,
-            symbol: token.symbol,
-            description: token.description,
-          }),
+          body: JSON.stringify({ name: token.name, symbol: token.symbol, description: token.description }),
         });
-        if (!retry.ok) throw new Error("Image model still loading. Try regenerating in a moment.");
+        if (!retry.ok) { setError("Image model still warming up. Try again in a moment."); return; }
         const retryData = await retry.json();
-        setImageBase64(retryData.base64);
-        setImagePublicUrl(retryData.publicUrl);
+        setImagePreview(retryData.base64 || null);
+        setImagePublicUrl(retryData.publicUrl || null);
         return;
       }
 
@@ -185,23 +144,62 @@ export default function Home() {
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.error || "Image generation failed");
       }
-
-      const imgData = await res.json();
-      setImageBase64(imgData.base64);
-      setImagePublicUrl(imgData.publicUrl);
+      const data = await res.json();
+      setImagePreview(data.base64 || null);
+      setImagePublicUrl(data.publicUrl || null);
     } catch (e) {
-      console.error("Image gen error:", e);
-      // Non-blocking — user can still deploy without image
+      setError(e instanceof Error ? e.message : "Image generation failed");
     } finally {
       setImgLoading(false);
     }
   };
 
-  // Step 3: Deploy token (async: submit → poll status)
-  const deployToken = async () => {
-    if (!tokenData) return;
+  // ── File upload ──────────────────────────────────────────
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadLoading(true);
+    setImagePreview(null);
+    setImagePublicUrl(null);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/upload-image", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setImagePreview(data.base64);       // data URI for instant preview
+      setImagePublicUrl(data.publicUrl);  // CDN URL for Bankr
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploadLoading(false);
+      e.target.value = "";
+    }
+  };
+
+  // ── URL paste ────────────────────────────────────────────
+  const applyImageUrl = () => {
+    const url = imageUrlInput.trim();
+    if (!url.startsWith("http")) { setError("Enter a valid https:// URL"); return; }
+    setImagePreview(url);   // use URL directly as preview src
+    setImagePublicUrl(url);
+    setError("");
+  };
+
+  // ── Clear image ──────────────────────────────────────────
+  const clearImage = () => {
+    setImagePreview(null);
+    setImagePublicUrl(null);
+    setImageUrlInput("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // ── Deploy ───────────────────────────────────────────────
+  const deploy = async () => {
+    if (!token.name.trim()) { setError("Token name is required"); return; }
     if (!effectiveWallet || !/^0x[a-fA-F0-9]{40}$/.test(effectiveWallet)) {
-      setError("Please enter or connect a valid wallet address (0x...)");
+      setError("Enter or connect a valid wallet address (0x...)");
       return;
     }
 
@@ -210,68 +208,53 @@ export default function Home() {
     setDeployStatus("Submitting to Bankr...");
 
     try {
-      // Step 1: Submit deploy job
       const res = await fetch("/api/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: tokenData.name,
-          symbol: tokenData.symbol,
-          description: tokenData.description,
+          name: token.name.trim(),
+          symbol: token.symbol.trim() || undefined,
+          description: token.description || token.tagline || undefined,
           imageUrl: imagePublicUrl || undefined,
           walletAddress: effectiveWallet,
         }),
       });
-
       const submitData = await res.json();
       if (!res.ok) throw new Error(submitData.error || "Deploy failed");
-
       if (!submitData.jobId) throw new Error("No job ID returned");
 
-      // Step 2: Poll for completion
-      setDeployStatus("Deploying on Base... (this takes ~60s)");
-      const jobId = submitData.jobId;
+      setDeployStatus("Deploying on Base... (~60s)");
       const params = new URLSearchParams({
-        jobId,
+        jobId: submitData.jobId,
         wallet: effectiveWallet,
-        name: tokenData.name,
-        symbol: tokenData.symbol || "",
+        name: token.name,
+        symbol: token.symbol || "",
       });
 
       for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 3000));
-        
         try {
-          const pollRes = await fetch(`/api/deploy/status?${params}`);
-          const pollData = await pollRes.json();
-
-          if (pollData.status === "completed") {
+          const poll = await fetch(`/api/deploy/status?${params}`);
+          const pd = await poll.json();
+          if (pd.status === "completed") {
             setDeployResult({
-              contractAddress: pollData.contractAddress,
-              dopplerUrl: pollData.dopplerUrl,
-              basescanUrl: pollData.basescanUrl,
-              bankrUrl: pollData.bankrUrl,
-              feeRecipient: pollData.feeRecipient || effectiveWallet,
+              contractAddress: pd.contractAddress,
+              dopplerUrl: pd.dopplerUrl,
+              basescanUrl: pd.basescanUrl,
+              bankrUrl: pd.bankrUrl,
+              feeRecipient: pd.feeRecipient || effectiveWallet,
             });
             setStep("success");
             setDeployStatus("");
             return;
           }
-
-          if (pollData.status === "failed") {
-            throw new Error(pollData.error || "Deploy failed on-chain");
-          }
-
-          // Still pending
-          const elapsed = (i + 1) * 3;
-          setDeployStatus(`Deploying on Base... (${elapsed}s)`);
+          if (pd.status === "failed") throw new Error(pd.error || "Deploy failed on-chain");
+          setDeployStatus(`Deploying on Base... (${(i + 1) * 3}s)`);
         } catch (pollErr) {
           if (pollErr instanceof Error && pollErr.message.includes("failed")) throw pollErr;
-          // Network hiccup, keep polling
         }
       }
-
-      throw new Error("Deploy timed out. Your token may still be deploying — check back in a minute.");
+      throw new Error("Timed out — your token may still be deploying. Check back in a minute.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Deploy failed");
       setDeployStatus("");
@@ -281,25 +264,26 @@ export default function Home() {
   };
 
   const reset = () => {
-    setStep("idea");
-    setIdea("");
-    setTokenData(null);
-    setImageBase64(null);
+    setStep("build");
+    setToken(emptyToken());
+    setImagePreview(null);
     setImagePublicUrl(null);
+    setImageUrlInput("");
     setDeployResult(null);
     setError("");
     setDeployStatus("");
   };
 
   const shareOnTwitter = () => {
-    if (!tokenData) return;
     const ca = deployResult?.contractAddress ? `\nCA: ${deployResult.contractAddress}` : "";
-    const text = `I just launched $${tokenData.symbol} (${tokenData.name}) on Base for FREE! 🚀\n\n"${tokenData.tagline}"\n\nI earn 57% of all trading fees forever 💰${ca}\n\nLaunch yours 👉 mint.thryx.mom\n\nPowered by @THRYXAGI x @bankaborhood`;
+    const text = `I just launched $${token.symbol || token.name} on Base for FREE! 🚀\n\n"${token.tagline || token.description}"\n\nEarning 57% of all trading fees forever 💰${ca}\n\nLaunch yours 👉 mint.thryx.mom\n\nPowered by @THRYXAGI`;
     window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, "_blank");
   };
 
-  const gensUsed = getDailyUsage("mememint_gens");
+  const isLoading = imgLoading || uploadLoading;
+  const canDeploy = token.name.trim().length >= 2 && !!effectiveWallet && /^0x[a-fA-F0-9]{40}$/.test(effectiveWallet);
 
+  // ── RENDER ────────────────────────────────────────────────
   return (
     <div>
       {/* Nav */}
@@ -313,367 +297,300 @@ export default function Home() {
         </div>
       </nav>
 
-      <main className="max-w-3xl mx-auto px-4 py-8">
-        {/* ========== STEP: IDEA ========== */}
-        {step === "idea" && (
+      <main className="max-w-2xl mx-auto px-4 py-8">
+
+        {/* ══════════ BUILD STEP ══════════ */}
+        {step === "build" && (
           <>
-            {/* Hero */}
-            <div className="text-center mb-10">
-              <h1 className="text-4xl md:text-5xl font-bold mb-3 glow-text">Launch a Token ⚡</h1>
-              <p className="text-lg text-gray-400 mb-1">Generate & deploy meme tokens on Base — for free</p>
-              <p className="text-sm text-[#39ff14]">You earn 57% of all trading fees forever</p>
-              <p className="text-xs text-gray-500 mt-2">
-                {pro ? "⚡ Pro — Unlimited" : `${FREE_GEN_LIMIT - gensUsed}/${FREE_GEN_LIMIT} free generations left today`}
-              </p>
+            <div className="text-center mb-8">
+              <h1 className="text-4xl font-bold mb-2 glow-text">Launch a Token ⚡</h1>
+              <p className="text-gray-400">Deploy on Base free — you earn 57% of swap fees forever</p>
             </div>
 
-            {/* Quick Themes */}
-            <div className="mb-6">
-              <p className="text-xs text-gray-500 text-center mb-3">Quick start with a theme:</p>
-              <div className="flex flex-wrap justify-center gap-2">
-                {themes.map((t) => (
-                  <button
-                    key={t.label}
-                    onClick={() => { setIdea(t.idea); generate(t.idea); }}
-                    className="px-3 py-1.5 text-sm rounded-lg bg-white/5 border border-white/10 hover:border-[#39ff14]/40 hover:bg-[#39ff14]/5 transition-all"
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
+            {/* ── Quick themes ── */}
+            <div className="flex flex-wrap justify-center gap-2 mb-6">
+              {themes.map((t) => (
+                <button
+                  key={t.label}
+                  onClick={() => aiGenerate(t.idea)}
+                  disabled={aiLoading}
+                  className="px-3 py-1.5 text-xs rounded-lg bg-white/5 border border-white/10 hover:border-[#39ff14]/40 hover:bg-[#39ff14]/5 transition-all disabled:opacity-40"
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
 
-            {/* Input */}
-            <div className="glass p-6 animate-glow">
-              <textarea
-                className="w-full bg-transparent border border-white/20 rounded-xl p-4 text-lg resize-none focus:outline-none focus:border-[#39ff14]/50 placeholder-gray-600"
-                rows={3}
-                placeholder="Describe your meme token idea... (e.g. 'a cat that trades crypto while sleeping')"
-                value={idea}
-                onChange={(e) => setIdea(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); generate(); } }}
-              />
-              <div className="mt-4 flex justify-center">
-                <button className="btn-primary" onClick={() => generate()} disabled={genLoading || !idea.trim()}>
-                  {genLoading ? (
-                    <span className="flex items-center gap-2">
-                      <span className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                      Generating...
-                    </span>
-                  ) : "⚡ Generate Token"}
+            {/* ── Token fields ── */}
+            <div className="glass p-6 mb-4">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">Token Details</h2>
+                <button
+                  onClick={() => aiGenerate()}
+                  disabled={aiLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs hover:border-[#39ff14]/40 hover:bg-[#39ff14]/5 transition-all disabled:opacity-40"
+                >
+                  {aiLoading ? (
+                    <><span className="w-3 h-3 border border-[#39ff14] border-t-transparent rounded-full animate-spin" /> AI filling...</>
+                  ) : (
+                    <><span>🤖</span> AI Fill (optional)</>
+                  )}
                 </button>
               </div>
-            </div>
 
-            {error && <div className="text-red-400 text-center mt-4 glass p-4">{error}</div>}
-
-            {/* How it works */}
-            <div className="mt-12">
-              <h3 className="text-center text-lg font-semibold text-gray-300 mb-6">How It Works</h3>
-              <div className="grid md:grid-cols-3 gap-4">
-                <div className="glass p-5 text-center">
-                  <div className="text-3xl mb-2">💡</div>
-                  <h4 className="font-bold mb-1">1. Describe</h4>
-                  <p className="text-sm text-gray-400">Enter your meme concept. AI generates name, symbol, and logo.</p>
-                </div>
-                <div className="glass p-5 text-center">
-                  <div className="text-3xl mb-2">🎨</div>
-                  <h4 className="font-bold mb-1">2. Customize</h4>
-                  <p className="text-sm text-gray-400">Edit any field, regenerate the logo, make it yours.</p>
-                </div>
-                <div className="glass p-5 text-center">
-                  <div className="text-3xl mb-2">🚀</div>
-                  <h4 className="font-bold mb-1">3. Deploy Free</h4>
-                  <p className="text-sm text-gray-400">Launch on Base for free. Earn 57% of swap fees forever.</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Fee explainer */}
-            <div className="mt-8 glass p-5 border border-[#39ff14]/20">
-              <div className="text-center">
-                <h4 className="font-bold text-[#39ff14] mb-2">💰 Earn Forever</h4>
-                <p className="text-sm text-gray-400 mb-3">
-                  Every token deployed through MemeMint earns <strong className="text-white">1.2% on every swap</strong>. 
-                  As the creator, <strong className="text-[#39ff14]">you receive 57% of those fees</strong> directly to your wallet — forever.
-                </p>
-                <p className="text-xs text-gray-500">
-                  Powered by <a href="https://bankr.bot" target="_blank" rel="noopener" className="text-purple-400 hover:underline">Bankr</a> · 
-                  Gas sponsored by Bankr Club · Free (100 deploys/day limit)
-                </p>
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* ========== STEP: REVIEW ========== */}
-        {step === "review" && tokenData && (
-          <>
-            <div className="flex items-center justify-between mb-6">
-              <button onClick={reset} className="text-sm text-gray-500 hover:text-white transition">← Back</button>
-              <h2 className="text-lg font-semibold text-gray-300">Review & Deploy</h2>
-              <div className="w-12" />
-            </div>
-
-            <div className="glass p-6 mb-6">
-              {/* Token Preview Header */}
-              <div className="flex items-start gap-5 mb-6">
-                {/* Image preview */}
-                <div className="shrink-0">
-                  {(imgLoading || uploadLoading) ? (
-                    <div className="w-24 h-24 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-                      <div className="w-8 h-8 border-2 border-[#39ff14] border-t-transparent rounded-full animate-spin" />
+              <div className="space-y-3">
+                {/* Name + Symbol row */}
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className="text-xs text-gray-500 mb-1 block">Token Name *</label>
+                    <input
+                      type="text"
+                      value={token.name}
+                      onChange={(e) => updateField("name", e.target.value)}
+                      placeholder="e.g. Doge but cooler"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
+                    />
+                  </div>
+                  <div className="w-28">
+                    <label className="text-xs text-gray-500 mb-1 block">Symbol</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+                      <input
+                        type="text"
+                        value={token.symbol}
+                        onChange={(e) => updateField("symbol", e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 5))}
+                        placeholder="COOL"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-6 pr-3 py-2.5 text-sm font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
+                      />
                     </div>
-                  ) : imageBase64 ? (
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Description</label>
+                  <textarea
+                    value={token.description}
+                    onChange={(e) => updateField("description", e.target.value)}
+                    placeholder="What's this token about? (used for AI image gen)"
+                    rows={2}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm resize-none focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
+                  />
+                </div>
+
+                {token.tagline || aiLoading ? (
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Tagline</label>
+                    <input
+                      type="text"
+                      value={token.tagline}
+                      onChange={(e) => updateField("tagline", e.target.value)}
+                      placeholder="One punchy line"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            {/* ── Logo ── */}
+            <div className="glass p-6 mb-4">
+              <div className="flex items-start gap-4">
+                {/* Preview */}
+                <div className="shrink-0">
+                  {isLoading ? (
+                    <div className="w-20 h-20 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+                      <div className="w-7 h-7 border-2 border-[#39ff14] border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  ) : imagePreview ? (
                     <div className="relative group">
-                      <img src={imageBase64} alt={tokenData.name} className="w-24 h-24 rounded-2xl object-cover border border-white/10" />
+                      <img
+                        src={imagePreview}
+                        alt="Token logo"
+                        className="w-20 h-20 rounded-2xl object-cover border border-white/10"
+                        onError={() => { setImagePreview(null); setError("Image failed to load — try a different URL or upload"); }}
+                      />
                       <button
-                        onClick={() => { setImageBase64(null); setImagePublicUrl(null); }}
-                        className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl flex items-center justify-center text-xs font-medium"
-                      >
-                        ✕ Remove
-                      </button>
+                        onClick={clearImage}
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-black/80 border border-white/20 rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      >✕</button>
                     </div>
                   ) : (
-                    <div className="w-24 h-24 rounded-2xl bg-white/5 border border-dashed border-white/20 flex flex-col items-center justify-center text-xs text-gray-500">
-                      <span className="text-2xl mb-1">🖼️</span>
-                      No logo
+                    <div className="w-20 h-20 rounded-2xl bg-white/5 border border-dashed border-white/20 flex items-center justify-center text-gray-600 text-2xl">
+                      🖼️
                     </div>
                   )}
                 </div>
 
-                {/* Name & Symbol */}
+                {/* Controls */}
                 <div className="flex-1 min-w-0">
-                  <input
-                    type="text"
-                    value={tokenData.name}
-                    onChange={(e) => updateField("name", e.target.value)}
-                    className="w-full bg-transparent text-2xl font-bold focus:outline-none border-b border-transparent hover:border-white/20 focus:border-[#39ff14]/50 transition pb-1 mb-1"
-                    placeholder="Token Name"
-                  />
-                  <div className="flex items-center gap-1">
-                    <span className="text-gray-500">$</span>
-                    <input
-                      type="text"
-                      value={tokenData.symbol}
-                      onChange={(e) => updateField("symbol", e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 5))}
-                      className="bg-transparent text-lg font-mono neon-purple focus:outline-none border-b border-transparent hover:border-white/20 focus:border-[#39ff14]/50 transition pb-1 w-24"
-                      placeholder="SYM"
-                    />
+                  <label className="text-xs text-gray-500 mb-2 block">Token Logo <span className="text-gray-600">(optional)</span></label>
+
+                  {/* Mode tabs */}
+                  <div className="flex gap-1.5 mb-3">
+                    {(["ai", "upload", "url"] as ImageMode[]).map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => setImageMode(m)}
+                        className={`px-3 py-1 rounded-md text-xs font-medium border transition-all ${
+                          imageMode === m
+                            ? "border-[#39ff14]/50 bg-[#39ff14]/10 text-[#39ff14]"
+                            : "border-white/10 bg-white/5 text-gray-400 hover:text-white"
+                        }`}
+                      >
+                        {m === "ai" ? "🤖 AI" : m === "upload" ? "📁 Upload" : "🔗 URL"}
+                      </button>
+                    ))}
                   </div>
-                </div>
-              </div>
 
-              {/* Image Source Selector */}
-              <div className="mb-5">
-                <label className="text-xs text-gray-500 mb-2 block">Token Logo</label>
-                <div className="flex gap-2 mb-3">
-                  {(["upload", "ai", "url"] as const).map((mode) => (
+                  {/* AI mode */}
+                  {imageMode === "ai" && (
                     <button
-                      key={mode}
-                      onClick={() => setImageMode(mode)}
-                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium border transition-all ${
-                        imageMode === mode
-                          ? "border-[#39ff14]/60 bg-[#39ff14]/10 text-[#39ff14]"
-                          : "border-white/10 bg-white/5 text-gray-400 hover:border-white/20"
-                      }`}
-                    >
-                      {mode === "upload" ? "📁 Upload" : mode === "ai" ? "🤖 AI Generate" : "🔗 Paste URL"}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Upload */}
-                {imageMode === "upload" && (
-                  <label className={`flex items-center justify-center gap-3 w-full p-4 rounded-xl border-2 border-dashed cursor-pointer transition-all ${
-                    uploadLoading ? "border-white/10 opacity-50" : "border-white/20 hover:border-[#39ff14]/40 hover:bg-[#39ff14]/5"
-                  }`}>
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/gif,image/webp"
-                      className="hidden"
-                      onChange={handleImageUpload}
-                      disabled={uploadLoading}
-                    />
-                    {uploadLoading ? (
-                      <span className="text-sm text-gray-400">Uploading...</span>
-                    ) : (
-                      <>
-                        <span className="text-2xl">📁</span>
-                        <div>
-                          <p className="text-sm font-medium">Click to upload your logo</p>
-                          <p className="text-xs text-gray-500">JPG, PNG, GIF, WEBP — max 5MB</p>
-                        </div>
-                      </>
-                    )}
-                  </label>
-                )}
-
-                {/* AI Generate */}
-                {imageMode === "ai" && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => generateImage()}
+                      onClick={aiGenImage}
                       disabled={imgLoading}
-                      className="flex-1 py-2.5 px-4 rounded-xl bg-white/5 border border-white/10 hover:border-[#39ff14]/40 text-sm transition-all disabled:opacity-50"
+                      className="w-full py-2 px-3 rounded-lg bg-white/5 border border-white/10 hover:border-[#39ff14]/40 text-xs text-gray-300 hover:text-white transition-all disabled:opacity-40 text-left"
                     >
-                      {imgLoading ? (
-                        <span className="flex items-center justify-center gap-2">
-                          <span className="w-4 h-4 border-2 border-[#39ff14] border-t-transparent rounded-full animate-spin" />
-                          Generating...
-                        </span>
-                      ) : imageBase64 ? "🔄 Regenerate Logo" : "🤖 Generate Logo with AI"}
+                      {imgLoading
+                        ? "Generating from your token info..."
+                        : imagePreview
+                          ? "🔄 Regenerate (uses your current name + description)"
+                          : "✨ Generate logo from your token name & description"}
                     </button>
-                  </div>
-                )}
+                  )}
 
-                {/* URL paste */}
-                {imageMode === "url" && (
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={imageUrlInput}
-                      onChange={(e) => setImageUrlInput(e.target.value)}
-                      placeholder="https://example.com/logo.png"
-                      className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
-                    />
-                    <button
-                      onClick={applyImageUrl}
-                      disabled={!imageUrlInput.trim()}
-                      className="px-4 py-2 rounded-lg bg-[#39ff14]/10 border border-[#39ff14]/30 text-[#39ff14] text-sm hover:bg-[#39ff14]/20 transition disabled:opacity-40"
-                    >
-                      Use
-                    </button>
-                  </div>
-                )}
-              </div>
+                  {/* Upload mode */}
+                  {imageMode === "upload" && (
+                    <label className={`flex items-center gap-2 w-full py-2 px-3 rounded-lg border border-dashed cursor-pointer transition-all text-xs ${
+                      uploadLoading
+                        ? "border-white/10 opacity-50 cursor-not-allowed"
+                        : "border-white/20 hover:border-[#39ff14]/40 hover:bg-[#39ff14]/5 text-gray-400 hover:text-white"
+                    }`}>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/gif,image/webp"
+                        className="hidden"
+                        onChange={handleUpload}
+                        disabled={uploadLoading}
+                      />
+                      {uploadLoading ? "Uploading..." : "📁 Click to upload (JPG, PNG, GIF, WEBP · max 5MB)"}
+                    </label>
+                  )}
 
-              {/* Editable Fields */}
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Tagline</label>
-                  <input
-                    type="text"
-                    value={tokenData.tagline}
-                    onChange={(e) => updateField("tagline", e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#39ff14]/50 transition"
-                  />
+                  {/* URL mode */}
+                  {imageMode === "url" && (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={imageUrlInput}
+                        onChange={(e) => setImageUrlInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") applyImageUrl(); }}
+                        placeholder="https://example.com/logo.png"
+                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
+                      />
+                      <button
+                        onClick={applyImageUrl}
+                        disabled={!imageUrlInput.trim()}
+                        className="px-3 py-1.5 rounded-lg bg-[#39ff14]/10 border border-[#39ff14]/30 text-[#39ff14] text-xs hover:bg-[#39ff14]/20 transition disabled:opacity-40"
+                      >
+                        Use
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Description</label>
-                  <textarea
-                    value={tokenData.description}
-                    onChange={(e) => updateField("description", e.target.value)}
-                    rows={2}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-[#39ff14]/50 transition"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Twitter Bio</label>
-                  <input
-                    type="text"
-                    value={tokenData.twitterBio}
-                    onChange={(e) => updateField("twitterBio", e.target.value.slice(0, 160))}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#39ff14]/50 transition"
-                  />
-                  <p className="text-xs text-gray-600 mt-1 text-right">{tokenData.twitterBio.length}/160</p>
-                </div>
-              </div>
-
-              {/* Regenerate text only */}
-              <div className="flex gap-2 mt-4">
-                <button
-                  onClick={() => generate(idea)}
-                  className="btn-secondary text-xs py-2 px-3"
-                  disabled={genLoading}
-                >
-                  {genLoading ? "..." : "🔄 Regenerate Text"}
-                </button>
               </div>
             </div>
 
-            {/* Wallet Section */}
-            <div className="glass p-6 mb-6">
-              <h3 className="font-semibold mb-3 flex items-center gap-2">
-                <span>👛</span> Fee Recipient Wallet
-              </h3>
-              <p className="text-xs text-gray-400 mb-3">
-                This wallet will earn <strong className="text-[#39ff14]">57% of all trading fees</strong> from your token forever.
-              </p>
+            {/* ── Wallet ── */}
+            <div className="glass p-6 mb-4">
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-300">Fee Recipient Wallet</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">You earn <span className="text-[#39ff14] font-medium">57% of all trading fees</span> forever</p>
+                </div>
+              </div>
 
               {wallet ? (
                 <div className="flex items-center gap-3 bg-white/5 rounded-lg p-3 border border-white/10">
-                  <span className="text-green-400 text-lg">✓</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-mono truncate">{wallet}</p>
-                    <p className="text-xs text-gray-500">Connected wallet — fees go here</p>
-                  </div>
-                  <button onClick={disconnect} className="text-xs text-gray-500 hover:text-white">Change</button>
+                  <span className="text-green-400">✓</span>
+                  <p className="text-sm font-mono truncate flex-1">{wallet}</p>
+                  <button onClick={disconnect} className="text-xs text-gray-500 hover:text-white transition">Change</button>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   <div className="flex gap-2">
                     <input
                       type="text"
                       value={manualWallet}
                       onChange={(e) => setManualWallet(e.target.value.trim())}
-                      placeholder="0x... your wallet address"
+                      placeholder="0x... paste your wallet"
                       className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
                     />
-                    <button onClick={connect} className="btn-secondary text-xs py-2 px-3 whitespace-nowrap">
-                      Or Connect
-                    </button>
+                    <button onClick={connect} className="btn-secondary text-xs py-2 px-3 whitespace-nowrap">Connect</button>
                   </div>
                   {manualWallet && !/^0x[a-fA-F0-9]{40}$/.test(manualWallet) && (
-                    <p className="text-xs text-red-400">Enter a valid Ethereum address (0x + 40 hex characters)</p>
+                    <p className="text-xs text-red-400">Must be a valid 0x address</p>
                   )}
                 </div>
               )}
             </div>
 
-            {error && <div className="text-red-400 text-center mb-4 glass p-4 text-sm">{error}</div>}
+            {error && <div className="text-red-400 text-sm glass p-3 rounded-xl mb-4">{error}</div>}
 
-            {/* Deploy Button */}
-            <div className="text-center">
-              <button
-                className="btn-primary text-lg px-10 py-4"
-                onClick={deployToken}
-                disabled={deploying || !effectiveWallet || !/^0x[a-fA-F0-9]{40}$/.test(effectiveWallet)}
-              >
-                {deploying ? (
-                  <span className="flex items-center gap-3">
-                    <span className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                    {deployStatus || "Deploying..."}
-                  </span>
-                ) : "🚀 Deploy on Base — Free"}
-              </button>
-              <p className="text-xs text-gray-600 mt-2">Gas sponsored by Bankr Club · No cost to you</p>
+            {/* ── Deploy ── */}
+            <button
+              onClick={deploy}
+              disabled={deploying || !canDeploy}
+              className="btn-primary w-full text-base py-4"
+            >
+              {deploying ? (
+                <span className="flex items-center justify-center gap-3">
+                  <span className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                  {deployStatus || "Deploying..."}
+                </span>
+              ) : "🚀 Deploy on Base — Free"}
+            </button>
+            <p className="text-xs text-gray-600 text-center mt-2">Gas sponsored by Bankr Club · No cost to you</p>
+
+            {/* ── How it works (collapsed below fold) ── */}
+            <div className="mt-10 pt-8 border-t border-white/5">
+              <p className="text-xs text-gray-600 text-center mb-4 uppercase tracking-widest">How it works</p>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                {[
+                  { icon: "✏️", label: "Fill in details", sub: "Name, symbol, description — or let AI do it" },
+                  { icon: "🎨", label: "Add a logo", sub: "Upload yours, AI generate, or paste a URL" },
+                  { icon: "🚀", label: "Deploy free", sub: "Live on Base. You earn fees forever." },
+                ].map((s) => (
+                  <div key={s.label} className="glass p-3">
+                    <div className="text-2xl mb-1">{s.icon}</div>
+                    <p className="text-xs font-medium">{s.label}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{s.sub}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </>
         )}
 
-        {/* ========== STEP: SUCCESS ========== */}
-        {step === "success" && tokenData && deployResult && (
+        {/* ══════════ SUCCESS STEP ══════════ */}
+        {step === "success" && deployResult && (
           <>
             <div className="text-center mb-8">
-              <div className="text-6xl mb-4">🎉</div>
-              <h1 className="text-3xl font-bold glow-text mb-2">Token Launched!</h1>
-              <p className="text-gray-400">{tokenData.name} (${tokenData.symbol}) is live on Base</p>
+              <div className="text-6xl mb-3">🎉</div>
+              <h1 className="text-3xl font-bold glow-text mb-1">Token Launched!</h1>
+              <p className="text-gray-400">{token.name} {token.symbol ? `($${token.symbol})` : ""} is live on Base</p>
             </div>
 
             <div className="glass p-6 mb-6">
-              {/* Token info */}
-              <div className="flex items-center gap-4 mb-6">
-                {imageBase64 && (
-                  <img src={imageBase64} alt={tokenData.name} className="w-16 h-16 rounded-xl object-cover border border-white/10" />
+              <div className="flex items-center gap-4 mb-5">
+                {imagePreview && (
+                  <img src={imagePreview} alt={token.name} className="w-14 h-14 rounded-xl object-cover border border-white/10" />
                 )}
                 <div>
-                  <h2 className="text-2xl font-bold">{tokenData.name}</h2>
-                  <p className="neon-purple font-mono">${tokenData.symbol}</p>
+                  <h2 className="text-xl font-bold">{token.name}</h2>
+                  {token.symbol && <p className="font-mono text-sm neon-purple">${token.symbol}</p>}
                 </div>
               </div>
 
-              {/* Contract details */}
               {deployResult.contractAddress && (
                 <div className="bg-white/5 rounded-xl p-4 mb-4 border border-[#39ff14]/20">
                   <p className="text-xs text-gray-500 mb-1">Contract Address</p>
@@ -681,63 +598,45 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Fee recipient */}
               <div className="bg-white/5 rounded-xl p-4 mb-4 border border-purple-500/20">
-                <p className="text-xs text-gray-500 mb-1">💰 Fee Recipient (You)</p>
+                <p className="text-xs text-gray-500 mb-1">💰 Your fee wallet</p>
                 <p className="font-mono text-sm break-all text-purple-400">{deployResult.feeRecipient}</p>
-                <p className="text-xs text-gray-500 mt-1">You earn 57% of 1.2% on every swap — forever</p>
+                <p className="text-xs text-gray-600 mt-1">57% of 1.2% on every swap — forever</p>
               </div>
 
-              {/* Links */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div className="grid grid-cols-2 gap-2">
                 {deployResult.dopplerUrl && (
                   <a href={deployResult.dopplerUrl} target="_blank" rel="noopener"
                     className="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/10 hover:border-[#39ff14]/30 transition">
-                    <span className="text-xl">📊</span>
-                    <div>
-                      <p className="text-sm font-semibold">Trade on Doppler</p>
-                      <p className="text-xs text-gray-500">Buy, sell, provide liquidity</p>
-                    </div>
+                    <span>📊</span>
+                    <div><p className="text-xs font-semibold">Trade</p><p className="text-xs text-gray-500">Doppler</p></div>
                   </a>
                 )}
                 {deployResult.basescanUrl && (
                   <a href={deployResult.basescanUrl} target="_blank" rel="noopener"
                     className="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/10 hover:border-blue-500/30 transition">
-                    <span className="text-xl">🔍</span>
-                    <div>
-                      <p className="text-sm font-semibold">View on BaseScan</p>
-                      <p className="text-xs text-gray-500">Verify contract & txns</p>
-                    </div>
+                    <span>🔍</span>
+                    <div><p className="text-xs font-semibold">Contract</p><p className="text-xs text-gray-500">BaseScan</p></div>
                   </a>
                 )}
                 {deployResult.bankrUrl && (
                   <a href={deployResult.bankrUrl} target="_blank" rel="noopener"
                     className="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/10 hover:border-purple-500/30 transition">
-                    <span className="text-xl">🏦</span>
-                    <div>
-                      <p className="text-sm font-semibold">Bankr Page</p>
-                      <p className="text-xs text-gray-500">Manage & claim fees</p>
-                    </div>
+                    <span>🏦</span>
+                    <div><p className="text-xs font-semibold">Manage</p><p className="text-xs text-gray-500">Bankr</p></div>
                   </a>
                 )}
                 <a href="https://bankr.bot" target="_blank" rel="noopener"
                   className="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/10 hover:border-yellow-500/30 transition">
-                  <span className="text-xl">💰</span>
-                  <div>
-                    <p className="text-sm font-semibold">Claim Fees</p>
-                    <p className="text-xs text-gray-500">Learn how to claim your earnings</p>
-                  </div>
+                  <span>💰</span>
+                  <div><p className="text-xs font-semibold">Claim Fees</p><p className="text-xs text-gray-500">bankr.bot</p></div>
                 </a>
               </div>
             </div>
 
-            {/* Actions */}
             <div className="flex flex-wrap gap-3 justify-center">
               <button className="btn-primary" onClick={shareOnTwitter}>🐦 Share on Twitter</button>
-              <button className="btn-secondary" onClick={reset}>🔄 Launch Another Token</button>
-              <a href="https://mysocial.mom/bulletins" target="_blank" rel="noopener" className="btn-secondary">
-                📣 Share on MySocial
-              </a>
+              <button className="btn-secondary" onClick={reset}>🔄 Launch Another</button>
             </div>
           </>
         )}
