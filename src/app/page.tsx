@@ -306,7 +306,7 @@ export default function Home() {
 
   const shareOnTwitter = () => {
     const ca = deployResult?.contractAddress ? `\nCA: ${deployResult.contractAddress}` : "";
-    const text = `I just launched $${token.symbol || token.name} on Base for FREE! 🚀\n\n"${token.tagline || token.description}"\n\nEarning 57% of all trading fees forever 💰${ca}\n\nLaunch yours 👉 mint.thryx.mom\n\nPowered by @THRYXAGI`;
+    const text = `I just launched $${token.symbol || token.name} on Base for FREE! 🚀\n\n"${token.tagline || token.description}"\n\nEarning 40% of trading fees (via Clanker) forever 💰${ca}\n\nLaunch yours 👉 mint.thryx.mom\n\nPowered by @THRYXAGI`;
     window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, "_blank");
   };
 
@@ -334,7 +334,7 @@ export default function Home() {
           <>
             <div className="text-center mb-8">
               <h1 className="text-4xl font-bold mb-2 glow-text">Launch a Token ⚡</h1>
-              <p className="text-gray-400">Deploy on Base free — you earn 57% of swap fees forever</p>
+              <p className="text-gray-400">Deploy on Base free — you earn 40% of swap fees via Clanker</p>
             </div>
 
             {/* ── Quick themes ── */}
@@ -537,7 +537,7 @@ export default function Home() {
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <h3 className="text-sm font-semibold text-gray-300">Fee Recipient Wallet</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">You earn <span className="text-[#39ff14] font-medium">57% of all trading fees</span> forever</p>
+                  <p className="text-xs text-gray-500 mt-0.5">You earn <span className="text-[#39ff14] font-medium">40% of trading fees (via Clanker)</span> forever</p>
                 </div>
               </div>
 
@@ -642,7 +642,7 @@ export default function Home() {
                 {[
                   { icon: "✏️", label: "Fill in details", sub: "Name, symbol, description — or let AI do it" },
                   { icon: "🎨", label: "Add a logo", sub: "Upload yours, AI generate, or paste a URL" },
-                  { icon: "🚀", label: "Deploy free", sub: "Live on Base. You earn fees forever." },
+                  { icon: "🚀", label: "Deploy free", sub: "Live on Base. Creator earns 40% of swap fees via Clanker." },
                 ].map((s) => (
                   <div key={s.label} className="glass p-3">
                     <div className="text-2xl mb-1">{s.icon}</div>
@@ -685,7 +685,7 @@ export default function Home() {
               <div className="bg-white/5 rounded-xl p-4 mb-4 border border-purple-500/20">
                 <p className="text-xs text-gray-500 mb-1">💰 Your fee wallet</p>
                 <p className="font-mono text-sm break-all text-purple-400">{deployResult.feeRecipient}</p>
-                <p className="text-xs text-gray-600 mt-1">57% of 1.2% on every swap — forever</p>
+                <p className="text-xs text-gray-600 mt-1">40% of swap fees via Clanker/Bankr — forever</p>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
