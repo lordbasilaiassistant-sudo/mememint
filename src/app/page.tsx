@@ -34,9 +34,9 @@ const themes = [
 ];
 
 const FREE_GEN_LIMIT = 3;       // free: 3 AI text gens/day
-const PRO_GEN_LIMIT = 50;       // pro: 50/month
-const PRO_IMG_LIMIT = 20;       // pro: 20 images/month
-const ULTIMATE_GEN_LIMIT = 999; // ultimate: effectively unlimited
+const PRO_GEN_LIMIT = 999;      // pro ($19/mo): unlimited
+const PRO_IMG_LIMIT = 999;      // pro ($19/mo): unlimited
+const POWER_GEN_LIMIT = 999;    // power ($39/mo): unlimited
 
 const emptyToken = (): TokenData => ({
   name: "", symbol: "", description: "", tagline: "", twitterBio: "",
@@ -89,14 +89,14 @@ export default function Home() {
     if (!pro) {
       const usage = getDailyUsage("mememint_gens");
       if (usage >= FREE_GEN_LIMIT) {
-        setError(`Free limit: ${FREE_GEN_LIMIT} AI fills/day. Upgrade to Pro ($9/mo) for 50/month.`);
+        setError(`Free limit: ${FREE_GEN_LIMIT} AI fills/day. Upgrade to Pro at thryx.mom/subscribe for unlimited.`);
         return;
       }
     } else {
       // Pro: 50 gens/month hard cap
       const usage = getDailyUsage("mememint_gens_pro");
       if (usage >= PRO_GEN_LIMIT) {
-        setError(`Pro limit: ${PRO_GEN_LIMIT} AI fills/month. Upgrade to Ultimate for more.`);
+        setError(`Monthly limit reached. Visit thryx.mom/subscribe to manage your plan.`);
         return;
       }
     }
@@ -128,13 +128,13 @@ export default function Home() {
     }
     // Image gen is Pro+ only (too expensive to offer free)
     if (!pro) {
-      setError("AI image generation is Pro+ only ($9/mo). Upload your own logo or paste a URL for free.");
+      setError("AI logo generation is a Pro feature. Upgrade at thryx.mom/subscribe — or upload your own logo for free.");
       return;
     }
     // Pro: 20 images/month cap
     const imgUsage = getDailyUsage("mememint_imgs_pro");
     if (pro && imgUsage >= PRO_IMG_LIMIT) {
-      setError(`Pro image limit: ${PRO_IMG_LIMIT}/month. Upgrade to Ultimate for unlimited.`);
+      setError(`Monthly limit reached. Visit thryx.mom/subscribe to manage your plan.`);
       return;
     }
     setImgLoading(true);
@@ -485,7 +485,7 @@ export default function Home() {
                           ? "🔄 Regenerate (uses your current name + description)"
                           : pro
                             ? "✨ Generate logo from your token name & description"
-                            : "✨ Generate logo — ⚡ Pro only ($9/mo)"}
+                            : "✨ Generate logo — ⚡ Pro feature"}
                     </button>
                   )}
 
