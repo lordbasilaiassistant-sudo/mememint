@@ -20,7 +20,10 @@ interface DeployResult {
 }
 
 type Step = "build" | "success";
-type ImageMode = "upload" | "ai" | "url";
+type ImageMode = "upload" | "url";
+type FeeRecipient = "thryx" | "wallet" | "twitter";
+
+const THRYX_TREASURY = "0x7a3E312Ec6e20a9F62fE2405938EB9060312E334";
 
 const themes = [
   { label: "🐕 Dog Coin", idea: "a funny dog-themed meme coin" },
@@ -35,8 +38,6 @@ const themes = [
 
 const FREE_GEN_LIMIT = 3;       // free: 3 AI text gens/day
 const PRO_GEN_LIMIT = 999;      // pro ($19/mo): unlimited
-const PRO_IMG_LIMIT = 999;      // pro ($19/mo): unlimited
-const POWER_GEN_LIMIT = 999;    // power ($39/mo): unlimited
 
 const emptyToken = (): TokenData => ({
   name: "", symbol: "", description: "", tagline: "", twitterBio: "",
@@ -50,20 +51,22 @@ export default function Home() {
   const [imagePreview, setImagePreview] = useState<string | null>(null); // always a displayable src (data URI or https URL)
   const [imagePublicUrl, setImagePublicUrl] = useState<string | null>(null); // public https URL for Bankr
 
+  // Fee recipient
+  const [feeMode, setFeeMode] = useState<FeeRecipient>("thryx");
+  const [twitterHandle, setTwitterHandle] = useState("");
+
   // Optional advanced fields
   const [website, setWebsite] = useState("");
   const [tweet, setTweet] = useState("");
-  const [twitter, setTwitter] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Image mode
-  const [imageMode, setImageMode] = useState<ImageMode>("ai");
+  const [imageMode, setImageMode] = useState<ImageMode>("upload");
   const [imageUrlInput, setImageUrlInput] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Loading states
   const [aiLoading, setAiLoading] = useState(false);    // AI text gen
-  const [imgLoading, setImgLoading] = useState(false);   // AI image gen
   const [uploadLoading, setUploadLoading] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [deployStatus, setDeployStatus] = useState("");
@@ -120,67 +123,6 @@ export default function Home() {
     }
   };
 
-  // ── AI image gen — always uses current token name + description ──
-  const aiGenImage = async () => {
-    if (!token.name && !token.description) {
-      setError("Enter a token name or description before generating an image");
-      return;
-    }
-    // Image gen is Pro+ only (too expensive to offer free)
-    if (!pro) {
-      setError("AI logo generation is a Pro feature. Upgrade at thryx.mom/subscribe — or upload your own logo for free.");
-      return;
-    }
-    // Pro: 20 images/month cap
-    const imgUsage = getDailyUsage("mememint_imgs_pro");
-    if (pro && imgUsage >= PRO_IMG_LIMIT) {
-      setError(`Monthly limit reached. Visit thryx.mom/subscribe to manage your plan.`);
-      return;
-    }
-    setImgLoading(true);
-    setImagePreview(null);
-    setImagePublicUrl(null);
-    setError("");
-    try {
-      const res = await fetch("/api/generate-image", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: token.name || "Token",
-          symbol: token.symbol || "TKN",
-          description: token.description || token.tagline || "",
-        }),
-      });
-
-      if (res.status === 503) {
-        // Model warming — retry once
-        await new Promise((r) => setTimeout(r, 20000));
-        const retry = await fetch("/api/generate-image", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: token.name, symbol: token.symbol, description: token.description }),
-        });
-        if (!retry.ok) { setError("Image model still warming up. Try again in a moment."); return; }
-        const retryData = await retry.json();
-        setImagePreview(retryData.base64 || null);
-        setImagePublicUrl(retryData.publicUrl || null);
-        return;
-      }
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || "Image generation failed");
-      }
-      const data = await res.json();
-      setImagePreview(data.base64 || null);
-      setImagePublicUrl(data.publicUrl || null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Image generation failed");
-    } finally {
-      setImgLoading(false);
-    }
-  };
-
   // ── File upload ──────────────────────────────────────────
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -225,9 +167,25 @@ export default function Home() {
   // ── Deploy ───────────────────────────────────────────────
   const deploy = async () => {
     if (!token.name.trim()) { setError("Token name is required"); return; }
-    if (!effectiveWallet || !/^0x[a-fA-F0-9]{40}$/.test(effectiveWallet)) {
-      setError("Enter or connect a valid wallet address (0x...)");
-      return;
+
+    // Determine wallet + twitter for fee routing
+    let deployWallet = THRYX_TREASURY; // default: fees to THRYX treasury
+    let deployTwitter: string | undefined;
+
+    if (feeMode === "wallet") {
+      if (!effectiveWallet || !/^0x[a-fA-F0-9]{40}$/.test(effectiveWallet)) {
+        setError("Connect or enter a valid wallet address (0x...) for fee routing");
+        return;
+      }
+      deployWallet = effectiveWallet;
+    } else if (feeMode === "twitter") {
+      if (!twitterHandle.trim()) {
+        setError("Enter your Twitter/X handle for fee routing");
+        return;
+      }
+      deployTwitter = twitterHandle.trim();
+      // Still need a wallet for Bankr — use treasury as fallback
+      deployWallet = effectiveWallet || THRYX_TREASURY;
     }
 
     setDeploying(true);
@@ -243,10 +201,10 @@ export default function Home() {
           symbol: token.symbol.trim() || undefined,
           description: token.description || token.tagline || undefined,
           imageUrl: imagePublicUrl || undefined,
-          walletAddress: effectiveWallet,
+          walletAddress: deployWallet,
           website: website.trim() || undefined,
           tweet: tweet.trim() || undefined,
-          twitter: twitter.trim() || undefined,
+          twitter: deployTwitter || undefined,
         }),
       });
       const submitData = await res.json();
@@ -256,7 +214,7 @@ export default function Home() {
       setDeployStatus("Deploying on Base... (~60s)");
       const params = new URLSearchParams({
         jobId: submitData.jobId,
-        wallet: effectiveWallet,
+        wallet: deployWallet,
         name: token.name,
         symbol: token.symbol || "",
       });
@@ -272,7 +230,7 @@ export default function Home() {
               dopplerUrl: pd.dopplerUrl,
               basescanUrl: pd.basescanUrl,
               bankrUrl: pd.bankrUrl,
-              feeRecipient: pd.feeRecipient || effectiveWallet,
+              feeRecipient: pd.feeRecipient || deployWallet,
             });
             setStep("success");
             setDeployStatus("");
@@ -310,8 +268,12 @@ export default function Home() {
     window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, "_blank");
   };
 
-  const isLoading = imgLoading || uploadLoading;
-  const canDeploy = token.name.trim().length >= 2 && !!effectiveWallet && /^0x[a-fA-F0-9]{40}$/.test(effectiveWallet);
+  const isLoading = uploadLoading;
+  const canDeploy = token.name.trim().length >= 2 && (
+    feeMode === "thryx" ||
+    (feeMode === "wallet" && !!effectiveWallet && /^0x[a-fA-F0-9]{40}$/.test(effectiveWallet)) ||
+    (feeMode === "twitter" && !!twitterHandle.trim())
+  );
 
   // ── RENDER ────────────────────────────────────────────────
   return (
@@ -401,7 +363,7 @@ export default function Home() {
                   <textarea
                     value={token.description}
                     onChange={(e) => updateField("description", e.target.value)}
-                    placeholder="What's this token about? (used for AI image gen)"
+                    placeholder="What's this token about?"
                     rows={2}
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm resize-none focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
                   />
@@ -457,7 +419,7 @@ export default function Home() {
 
                   {/* Mode tabs */}
                   <div className="flex gap-1.5 mb-3">
-                    {(["ai", "upload", "url"] as ImageMode[]).map((m) => (
+                    {(["upload", "url"] as ImageMode[]).map((m) => (
                       <button
                         key={m}
                         onClick={() => setImageMode(m)}
@@ -467,27 +429,10 @@ export default function Home() {
                             : "border-white/10 bg-white/5 text-gray-400 hover:text-white"
                         }`}
                       >
-                        {m === "ai" ? "🤖 AI" : m === "upload" ? "📁 Upload" : "🔗 URL"}
+                        {m === "upload" ? "📁 Upload" : "🔗 URL"}
                       </button>
                     ))}
                   </div>
-
-                  {/* AI mode */}
-                  {imageMode === "ai" && (
-                    <button
-                      onClick={aiGenImage}
-                      disabled={imgLoading}
-                      className="w-full py-2 px-3 rounded-lg bg-white/5 border border-white/10 hover:border-[#39ff14]/40 text-xs text-gray-300 hover:text-white transition-all disabled:opacity-40 text-left"
-                    >
-                      {imgLoading
-                        ? "Generating from your token info..."
-                        : imagePreview
-                          ? "🔄 Regenerate (uses your current name + description)"
-                          : pro
-                            ? "✨ Generate logo from your token name & description"
-                            : "✨ Generate logo — ⚡ Pro feature"}
-                    </button>
-                  )}
 
                   {/* Upload mode */}
                   {imageMode === "upload" && (
@@ -532,36 +477,84 @@ export default function Home() {
               </div>
             </div>
 
-            {/* ── Wallet ── */}
+            {/* ── Fee Recipient ── */}
             <div className="glass p-6 mb-4">
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-300">Fee Recipient Wallet</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">You earn <span className="text-[#39ff14] font-medium">40% of trading fees (via Clanker)</span> forever</p>
-                </div>
+              <div className="mb-3">
+                <h3 className="text-sm font-semibold text-gray-300">Fee Recipient</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Creators earn <span className="text-[#39ff14] font-medium">40% of trading fees (via Clanker)</span> forever</p>
               </div>
 
-              {wallet ? (
-                <div className="flex items-center gap-3 bg-white/5 rounded-lg p-3 border border-white/10">
-                  <span className="text-green-400">✓</span>
-                  <p className="text-sm font-mono truncate flex-1">{wallet}</p>
-                  <button onClick={disconnect} className="text-xs text-gray-500 hover:text-white transition">Change</button>
-                </div>
-              ) : (
+              {/* Fee mode selector */}
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {([
+                  { mode: "thryx" as FeeRecipient, icon: "⚡", label: "THRYX Treasury", sub: "Default — supports the ecosystem" },
+                  { mode: "wallet" as FeeRecipient, icon: "👛", label: "My Wallet", sub: "Fees go to your wallet" },
+                  { mode: "twitter" as FeeRecipient, icon: "𝕏", label: "Twitter / X", sub: "Claim via your X account" },
+                ]).map((opt) => (
+                  <button
+                    key={opt.mode}
+                    onClick={() => setFeeMode(opt.mode)}
+                    className={`p-3 rounded-xl border text-left transition-all ${
+                      feeMode === opt.mode
+                        ? "border-[#39ff14]/50 bg-[#39ff14]/5"
+                        : "border-white/10 bg-white/5 hover:border-white/20"
+                    }`}
+                  >
+                    <div className="text-lg mb-1">{opt.icon}</div>
+                    <p className={`text-xs font-semibold ${feeMode === opt.mode ? "text-[#39ff14]" : "text-gray-300"}`}>{opt.label}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">{opt.sub}</p>
+                  </button>
+                ))}
+              </div>
+
+              {/* Wallet input (only when "My Wallet" selected) */}
+              {feeMode === "wallet" && (
                 <div className="space-y-2">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={manualWallet}
-                      onChange={(e) => setManualWallet(e.target.value.trim())}
-                      placeholder="0x... paste your wallet"
-                      className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
-                    />
-                    <button onClick={connect} className="btn-secondary text-xs py-2 px-3 whitespace-nowrap">Connect</button>
-                  </div>
-                  {manualWallet && !/^0x[a-fA-F0-9]{40}$/.test(manualWallet) && (
+                  {wallet ? (
+                    <div className="flex items-center gap-3 bg-white/5 rounded-lg p-3 border border-white/10">
+                      <span className="text-green-400">✓</span>
+                      <p className="text-sm font-mono truncate flex-1">{wallet}</p>
+                      <button onClick={disconnect} className="text-xs text-gray-500 hover:text-white transition">Change</button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={manualWallet}
+                        onChange={(e) => setManualWallet(e.target.value.trim())}
+                        placeholder="0x... paste your wallet"
+                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
+                      />
+                      <button onClick={connect} className="btn-secondary text-xs py-2 px-3 whitespace-nowrap">Connect</button>
+                    </div>
+                  )}
+                  {manualWallet && !wallet && !/^0x[a-fA-F0-9]{40}$/.test(manualWallet) && (
                     <p className="text-xs text-red-400">Must be a valid 0x address</p>
                   )}
+                </div>
+              )}
+
+              {/* Twitter input (only when "Twitter / X" selected) */}
+              {feeMode === "twitter" && (
+                <div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">@</span>
+                    <input
+                      type="text"
+                      value={twitterHandle}
+                      onChange={(e) => setTwitterHandle(e.target.value.replace(/^@/, ""))}
+                      placeholder="yourhandle"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg pl-7 pr-3 py-2 text-sm font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1.5">Claim fees at <a href="https://bankr.bot" target="_blank" className="text-[#39ff14] hover:underline">bankr.bot</a> using your X account</p>
+                </div>
+              )}
+
+              {/* Treasury info */}
+              {feeMode === "thryx" && (
+                <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+                  <p className="text-xs text-gray-400">Fees will go to the THRYX ecosystem treasury and be used for development, staking rewards, and burns.</p>
                 </div>
               )}
             </div>
@@ -572,7 +565,7 @@ export default function Home() {
                 onClick={() => setShowAdvanced(!showAdvanced)}
                 className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl border border-white/10 bg-white/5 text-xs text-gray-400 hover:text-white transition-all"
               >
-                <span>⚙️ Advanced options <span className="text-gray-600">(website, tweet, Twitter handle)</span></span>
+                <span>⚙️ Advanced options <span className="text-gray-600">(website, tweet)</span></span>
                 <span className={`transition-transform ${showAdvanced ? "rotate-180" : ""}`}>▾</span>
               </button>
 
@@ -597,22 +590,6 @@ export default function Home() {
                       placeholder="https://x.com/you/status/..."
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
                     />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">
-                      𝕏 Twitter/X Handle for Fees <span className="text-gray-600">(optional — route fees to your X account instead of wallet)</span>
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">@</span>
-                      <input
-                        type="text"
-                        value={twitter}
-                        onChange={(e) => setTwitter(e.target.value.replace(/^@/, ""))}
-                        placeholder="yourhandle"
-                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-7 pr-3 py-2 text-xs font-mono focus:outline-none focus:border-[#39ff14]/50 transition placeholder-gray-600"
-                      />
-                    </div>
-                    <p className="text-xs text-gray-600 mt-1">If set, overrides wallet address for fee routing. Claim fees at bankr.bot with your X account.</p>
                   </div>
                 </div>
               )}
@@ -641,7 +618,7 @@ export default function Home() {
               <div className="grid grid-cols-3 gap-3 text-center">
                 {[
                   { icon: "✏️", label: "Fill in details", sub: "Name, symbol, description — or let AI do it" },
-                  { icon: "🎨", label: "Add a logo", sub: "Upload yours, AI generate, or paste a URL" },
+                  { icon: "🎨", label: "Add a logo", sub: "Upload your image or paste a URL" },
                   { icon: "🚀", label: "Deploy free", sub: "Live on Base. Creator earns 40% of swap fees via Clanker." },
                 ].map((s) => (
                   <div key={s.label} className="glass p-3">
@@ -683,9 +660,18 @@ export default function Home() {
               )}
 
               <div className="bg-white/5 rounded-xl p-4 mb-4 border border-purple-500/20">
-                <p className="text-xs text-gray-500 mb-1">💰 Your fee wallet</p>
-                <p className="font-mono text-sm break-all text-purple-400">{deployResult.feeRecipient}</p>
-                <p className="text-xs text-gray-600 mt-1">40% of swap fees via Clanker/Bankr — forever</p>
+                <p className="text-xs text-gray-500 mb-1">💰 Fee Recipient</p>
+                {deployResult.feeRecipient.toLowerCase() === THRYX_TREASURY.toLowerCase() ? (
+                  <>
+                    <p className="text-sm font-semibold text-purple-400">⚡ THRYX Ecosystem Treasury</p>
+                    <p className="text-xs text-gray-600 mt-1">Fees support ecosystem development, staking rewards, and burns</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-mono text-sm break-all text-purple-400">{deployResult.feeRecipient}</p>
+                    <p className="text-xs text-gray-600 mt-1">40% of swap fees via Clanker/Bankr — forever</p>
+                  </>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-2">

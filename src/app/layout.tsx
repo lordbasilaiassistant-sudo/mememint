@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "MemeMint — AI Meme Token Generator",
-  description: "Generate creative meme token names, symbols, and marketing copy with AI. Powered by $THRYX (CA: 0xc07E889e1816De2708BF718683e52150C20F3BA3).",
+  title: "MemeMint — Free Token Launcher on Base",
+  description: "Launch meme tokens on Base for free. Upload your logo, deploy via Clanker, earn 40% of swap fees forever. Powered by $THRYX.",
   metadataBase: new URL("https://mint.thryx.mom"),
   alternates: { canonical: "/" },
   openGraph: {
-    title: "MemeMint — AI Meme Token Generator",
-    description: "Generate creative meme token concepts with AI. Powered by $THRYX.",
+    title: "MemeMint — Free Token Launcher on Base",
+    description: "Launch meme tokens on Base for free. Upload your logo, deploy via Clanker, earn 40% of swap fees.",
     url: "https://mint.thryx.mom",
     siteName: "MemeMint",
     images: [{ url: "/thryx-logo.png", width: 512, height: 512 }],
@@ -16,8 +16,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "MemeMint — AI Meme Token Generator",
-    description: "AI meme token generator. Powered by $THRYX. CA: 0xc07E889e1816De2708BF718683e52150C20F3BA3",
+    title: "MemeMint — Free Token Launcher on Base",
+    description: "Launch meme tokens on Base for free. Earn 40% swap fees via Clanker. Powered by $THRYX.",
     images: ["/thryx-logo.png"],
     creator: "@THRYXAGI",
   },
@@ -59,8 +59,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="flex flex-wrap justify-center gap-4 text-sm text-gray-400">
               <a href="https://thryx.mom/swap" className="hover:text-white transition-colors">Swap</a>
               <a href="https://thryx.mom/staking" className="hover:text-white transition-colors">Staking</a>
-              <a href="https://thryx.mom/predict" className="hover:text-white transition-colors">Predictions</a>
-              <a href="https://thryx.mom/lottery" className="hover:text-white transition-colors">Lottery</a>
+              <a href="https://thryx.mom/revenue" className="hover:text-white transition-colors">Revenue</a>
+              <a href="https://thryx.mom/subscribe" className="hover:text-yellow-400 transition-colors text-yellow-500/70">Go Pro</a>
               <span className="text-white/20">|</span>
               <a href="https://scanner.thryx.mom" className="hover:text-white transition-colors">AI Scanner</a>
               <a href="https://signals.thryx.mom" className="hover:text-white transition-colors">Signals</a>

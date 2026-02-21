@@ -50,7 +50,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Valid wallet address required (0x...)" }, { status: 400 });
   }
 
-  const image = imageUrl || `https://picsum.photos/seed/${encodeURIComponent(name)}/500/500`;
+  // Use uploaded image URL if available — skip image param entirely if none provided
+  // (Bankr will use a default if no image specified, better than a random placeholder)
+  const image = imageUrl || null;
   const desc = description || `${name} — deployed on Base via MemeMint`;
   const siteUrl = website?.trim() || "https://thryx.mom";
 
@@ -59,7 +61,7 @@ export async function POST(req: NextRequest) {
   const parts = [
     `Deploy a token on Base called ${name.trim()}`,
     symbol ? `with symbol ${symbol.trim()}` : "",
-    `with image ${image}`,
+    image ? `with image ${image}` : "",
     `with website ${siteUrl}`,
     tweet?.trim() ? `with tweet ${tweet.trim()}` : "",
     desc ? `Description: ${desc.slice(0, 200)}` : "",
