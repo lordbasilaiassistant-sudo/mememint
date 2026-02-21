@@ -27,7 +27,7 @@ export default function Trending() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/trending?page=${p}&limit=${PAGE_SIZE}`);
+      const res = await fetch(`https://thryx.mom/api/mememint/trending?page=${p}&limit=${PAGE_SIZE}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load");
       setTokens(data.tokens || []);

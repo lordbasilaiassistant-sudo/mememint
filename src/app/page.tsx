@@ -107,7 +107,7 @@ export default function Home() {
     setAiLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/generate", {
+      const res = await fetch("https://thryx.mom/api/mememint/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ idea: concept }),
@@ -193,7 +193,7 @@ export default function Home() {
     setDeployStatus("Submitting to Bankr...");
 
     try {
-      const res = await fetch("/api/deploy", {
+      const res = await fetch("https://thryx.mom/api/mememint/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -222,7 +222,7 @@ export default function Home() {
       for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 3000));
         try {
-          const poll = await fetch(`/api/deploy/status?${params}`);
+          const poll = await fetch(`https://thryx.mom/api/mememint/deploy/status?${params}`);
           const pd = await poll.json();
           if (pd.status === "completed") {
             setDeployResult({
