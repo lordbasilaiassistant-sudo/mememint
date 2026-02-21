@@ -23,7 +23,7 @@ type Step = "build" | "success";
 type ImageMode = "upload" | "url";
 type FeeRecipient = "thryx" | "wallet" | "twitter";
 
-const THRYX_TREASURY = "0x7a3E312Ec6e20a9F62fE2405938EB9060312E334";
+const THRYX_BANKR_WALLET = "0x8f9ec800972258e48d7ebc2640ea0b5e245c2cf5";
 
 const themes = [
   { label: "🐕 Dog Coin", idea: "a funny dog-themed meme coin" },
@@ -169,7 +169,7 @@ export default function Home() {
     if (!token.name.trim()) { setError("Token name is required"); return; }
 
     // Determine wallet + twitter for fee routing
-    let deployWallet = THRYX_TREASURY; // default: fees to THRYX treasury
+    let deployWallet = THRYX_BANKR_WALLET; // default: fees to THRYX treasury
     let deployTwitter: string | undefined;
 
     if (feeMode === "wallet") {
@@ -185,7 +185,7 @@ export default function Home() {
       }
       deployTwitter = twitterHandle.trim();
       // Still need a wallet for Bankr — use treasury as fallback
-      deployWallet = effectiveWallet || THRYX_TREASURY;
+      deployWallet = effectiveWallet || THRYX_BANKR_WALLET;
     }
 
     setDeploying(true);
@@ -487,7 +487,7 @@ export default function Home() {
               {/* Fee mode selector */}
               <div className="grid grid-cols-3 gap-2 mb-3">
                 {([
-                  { mode: "thryx" as FeeRecipient, icon: "⚡", label: "THRYX Treasury", sub: "Default — supports the ecosystem" },
+                  { mode: "thryx" as FeeRecipient, icon: "⚡", label: "THRYX Team", sub: "Default — supports the ecosystem" },
                   { mode: "wallet" as FeeRecipient, icon: "👛", label: "My Wallet", sub: "Fees go to your wallet" },
                   { mode: "twitter" as FeeRecipient, icon: "𝕏", label: "Twitter / X", sub: "Claim via your X account" },
                 ]).map((opt) => (
@@ -554,7 +554,7 @@ export default function Home() {
               {/* Treasury info */}
               {feeMode === "thryx" && (
                 <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-                  <p className="text-xs text-gray-400">Fees will go to the THRYX ecosystem treasury and be used for development, staking rewards, and burns.</p>
+                  <p className="text-xs text-gray-400">Fees will go to the THRYX team Bankr wallet and be used for development, staking rewards, and burns.</p>
                 </div>
               )}
             </div>
@@ -661,9 +661,9 @@ export default function Home() {
 
               <div className="bg-white/5 rounded-xl p-4 mb-4 border border-purple-500/20">
                 <p className="text-xs text-gray-500 mb-1">💰 Fee Recipient</p>
-                {deployResult.feeRecipient.toLowerCase() === THRYX_TREASURY.toLowerCase() ? (
+                {deployResult.feeRecipient.toLowerCase() === THRYX_BANKR_WALLET.toLowerCase() ? (
                   <>
-                    <p className="text-sm font-semibold text-purple-400">⚡ THRYX Ecosystem Treasury</p>
+                    <p className="text-sm font-semibold text-purple-400">⚡ THRYX Team</p>
                     <p className="text-xs text-gray-600 mt-1">Fees support ecosystem development, staking rewards, and burns</p>
                   </>
                 ) : (

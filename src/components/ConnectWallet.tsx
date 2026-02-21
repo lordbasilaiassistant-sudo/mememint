@@ -1,6 +1,9 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { getStoredAuth, clearStoredAuth, checkSubscription, isPro, isOwnerWallet, startWalletDiscovery, getWalletProvider, DiscoveredWallet } from "@/lib/thryx-auth";
+import {
+  getStoredAuth, clearStoredAuth, checkSubscription, isPro, isOwnerWallet,
+  startWalletDiscovery, getWalletProvider, connectAuth, DiscoveredWallet,
+} from "@/lib/thryx-auth";
 
 export function useThryxAuth() {
   const [wallet, setWallet] = useState<string | null>(null);
@@ -11,53 +14,66 @@ export function useThryxAuth() {
 
   useEffect(() => { startWalletDiscovery(); }, []);
 
-  const checkStatus = useCallback(async (token: string, addr?: string | null) => {
-    const status = await checkSubscription(token);
-    if (status.expired) { setWallet(null); setPro(false); return; }
-    setPro(isPro(status, addr));
-  }, []);
-
+  // On mount: restore session from stored auth
   useEffect(() => {
     const auth = getStoredAuth();
     if (auth) {
       setWallet(auth.wallet);
-      checkStatus(auth.token, auth.wallet).finally(() => setLoading(false));
-    } else { setLoading(false); }
-  }, [checkStatus]);
+      if (isOwnerWallet(auth.wallet)) setPro(true);
+      checkSubscription(auth.token).then(status => {
+        if (status.expired) { setWallet(null); setPro(false); }
+        else setPro(isPro(status, auth.wallet));
+      }).finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, []);
 
+  // Connect with a specific wallet provider (from EIP-6963 picker)
   const connectWithProvider = useCallback(async (prov: any) => {
     try {
       const accounts = await prov.request({ method: "eth_requestAccounts" });
       const addr = accounts[0];
       if (!addr) return;
       setShowPicker(false);
-      // Connect immediately — ONE popup only, no sign-in challenge
       setWallet(addr);
-      if (isOwnerWallet(addr)) setPro(true);
-      // Check stored token for Pro status (no new sign-in needed)
-      const stored = getStoredAuth();
-      if (stored && stored.wallet.toLowerCase() === addr.toLowerCase()) {
-        await checkStatus(stored.token, addr);
-      }
-    } catch (e) { console.error("Wallet connect error:", e); }
-  }, [checkStatus]);
 
+      // Owner wallets get instant Pro
+      if (isOwnerWallet(addr)) { setPro(true); }
+
+      // Get auth token from thryx.mom/api/auth/connect
+      try {
+        const authData = await connectAuth(addr);
+        // Check subscription status with new token
+        const status = await checkSubscription(authData.token);
+        setPro(isPro(status, addr));
+      } catch (e) {
+        console.error("Auth token error:", e);
+        // Wallet connected but auth failed — still usable, just no Pro check
+      }
+    } catch (e) {
+      console.error("Wallet connect error:", e);
+    }
+  }, []);
+
+  // Show wallet picker
   const connect = useCallback(async () => {
     const { wallets } = getWalletProvider();
-    if (wallets.length >= 1) {
-      setWalletOptions(wallets);
-      setShowPicker(true);
-      return;
-    }
-    // No wallets at all — show picker with install links
-    setWalletOptions([]);
+    setWalletOptions(wallets);
     setShowPicker(true);
   }, []);
 
-  const disconnect = () => { clearStoredAuth(); setWallet(null); setPro(false); setShowPicker(false); };
+  const disconnect = () => {
+    clearStoredAuth();
+    setWallet(null);
+    setPro(false);
+    setShowPicker(false);
+  };
 
   return { wallet, pro, loading, connect, disconnect, showPicker, setShowPicker, walletOptions, connectWithProvider };
 }
+
+// --- Reusable Components ---
 
 export default function ConnectWallet({ wallet, pro, connect, disconnect }: {
   wallet: string | null; pro: boolean; connect: () => void; disconnect: () => void;
@@ -135,27 +151,6 @@ export function ProBanner({ pro, feature }: { pro: boolean; feature?: string }) 
     <div className="mb-4 p-3 rounded-lg border border-gray-700/50 bg-gray-900/30 text-center text-sm">
       <span className="text-gray-400">Free Tier</span>
       <a href="https://thryx.mom/subscribe" target="_blank" rel="noopener" className="text-cyan-400 hover:text-cyan-300 ml-2">Upgrade →</a>
-    </div>
-  );
-}
-
-export function AccountSection({ wallet, pro }: { wallet: string | null; pro: boolean }) {
-  if (!wallet) return null;
-  return (
-    <div className="glass p-6 text-center">
-      <h3 className="text-lg font-bold mb-3 gradient-text">My Account</h3>
-      <p className="text-sm text-gray-400 font-mono mb-3">{wallet}</p>
-      <div className="inline-block px-4 py-2 rounded-lg border mb-4" style={{
-        borderColor: pro ? 'rgba(234,179,8,0.3)' : 'rgba(255,255,255,0.1)',
-        background: pro ? 'rgba(234,179,8,0.1)' : 'rgba(255,255,255,0.05)'
-      }}>
-        {pro ? <span className="text-yellow-400 font-semibold">⚡ Pro Subscriber</span> : <span className="text-gray-400">Free Tier</span>}
-      </div>
-      {!pro && (
-        <div className="mt-3">
-          <a href="https://thryx.mom/subscribe" target="_blank" rel="noopener" className="btn-primary text-sm">Upgrade to Pro — Pay with $THRYX</a>
-        </div>
-      )}
     </div>
   );
 }

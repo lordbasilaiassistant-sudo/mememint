@@ -1,16 +1,17 @@
 /**
  * THRYX Unified Auth + EIP-6963 Wallet Discovery
- * Drop into any ecosystem site at src/lib/thryx-auth.ts
- * All auth goes through thryx.mom central API
- * All wallet connection uses EIP-6963 (Rainbow, MetaMask, Coinbase, etc.)
+ * Standardized across ALL ecosystem subdomain apps.
+ * All auth goes through thryx.mom/api — single source of truth.
+ *
+ * Flow: EIP-6963 discover wallets → eth_requestAccounts → /api/auth/connect → token → /api/user/status
  */
 
 const AUTH_API = 'https://thryx.mom';
 
 // Owner wallets always get Pro (client-side fast check)
 const OWNER_WALLETS = [
-  '0x7a3e312ec6e20a9f62fe2405938eb9060312e334',
-  '0x718d6142fb15f95f43fac6f70498d8da130240bc',
+  '0x7a3e312ec6e20a9f62fe2405938eb9060312e334', // treasury
+  '0x718d6142fb15f95f43fac6f70498d8da130240bc', // dev
 ].map(w => w.toLowerCase());
 
 export function isOwnerWallet(wallet: string | null): boolean {
@@ -18,12 +19,30 @@ export function isOwnerWallet(wallet: string | null): boolean {
   return OWNER_WALLETS.includes(wallet.toLowerCase());
 }
 
-// --- Auth API ---
+// --- Auth API (all calls go to thryx.mom) ---
 
+/** Lightweight connect — get a 30-day token immediately (no signature needed) */
+export async function connectAuth(walletAddress: string): Promise<{ token: string; wallet: string }> {
+  const res = await fetch(`${AUTH_API}/api/auth/connect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ walletAddress }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Auth failed' }));
+    throw new Error(err.error || 'Failed to authenticate');
+  }
+  const data = await res.json();
+  // Store immediately
+  setStoredAuth(data.token, data.wallet);
+  return data;
+}
+
+/** Check subscription status — returns { activeTiers, pro, wallet, isOwner } */
 export async function checkSubscription(token: string) {
   try {
     const res = await fetch(`${AUTH_API}/api/user/status`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
     });
     if (res.status === 401) {
       clearStoredAuth();
@@ -36,25 +55,7 @@ export async function checkSubscription(token: string) {
   }
 }
 
-export async function getChallenge(walletAddress: string) {
-  const res = await fetch(`${AUTH_API}/api/auth/challenge`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ walletAddress })
-  });
-  return res.json();
-}
-
-export async function verifySignature(walletAddress: string, signature: string, nonce: string) {
-  const res = await fetch(`${AUTH_API}/api/auth/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ walletAddress, signature, nonce })
-  });
-  return res.json();
-}
-
-// --- Local Storage ---
+// --- Local Storage + Cookies ---
 
 export function getStoredAuth(): { token: string; wallet: string } | null {
   if (typeof window === 'undefined') return null;
@@ -67,11 +68,20 @@ export function getStoredAuth(): { token: string; wallet: string } | null {
 export function setStoredAuth(token: string, wallet: string) {
   localStorage.setItem('thryx_auth_token', token);
   localStorage.setItem('thryx_wallet', wallet);
+  // Also set cookie for server-side API routes
+  if (typeof document !== 'undefined') {
+    document.cookie = `thryx_token=${token}; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
+    document.cookie = `thryx_wallet=${wallet}; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
+  }
 }
 
 export function clearStoredAuth() {
   localStorage.removeItem('thryx_auth_token');
   localStorage.removeItem('thryx_wallet');
+  if (typeof document !== 'undefined') {
+    document.cookie = 'thryx_token=; path=/; max-age=0';
+    document.cookie = 'thryx_wallet=; path=/; max-age=0';
+  }
 }
 
 export function isPro(status: { activeTiers?: string[] }, wallet?: string | null): boolean {
@@ -79,7 +89,17 @@ export function isPro(status: { activeTiers?: string[] }, wallet?: string | null
   return status?.activeTiers?.some((t: string) => t !== 'free') ?? false;
 }
 
-// --- Usage Tracking ---
+/** Authenticated fetch — auto-attaches Bearer token */
+export async function authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
+  const auth = getStoredAuth();
+  const headers = new Headers(opts.headers);
+  if (auth?.token) {
+    headers.set('Authorization', `Bearer ${auth.token}`);
+  }
+  return fetch(url, { ...opts, headers });
+}
+
+// --- Usage Tracking (client-side daily limits) ---
 
 export function getDailyUsage(key: string): number {
   if (typeof window === 'undefined') return 0;
@@ -133,17 +153,13 @@ export function getDiscoveredWallets(): DiscoveredWallet[] {
 
 /**
  * Get the best available provider:
- * - If EIP-6963 found exactly 1 wallet, return it
- * - If EIP-6963 found multiple, return null (caller should show picker)
+ * - If EIP-6963 found wallets, return them for picker UI
  * - Fallback to window.ethereum
- * Returns { provider, wallets } where wallets.length > 1 means show picker
  */
 export function getWalletProvider(): { provider: any | null; wallets: DiscoveredWallet[] } {
-  // Always return wallets for picker — never auto-connect (user should confirm)
   if (_discoveredWallets.length >= 1) {
     return { provider: null, wallets: _discoveredWallets };
   }
-  // Fallback to window.ethereum but still show in picker
   const eth = typeof window !== 'undefined' ? (window as any).ethereum : null;
   if (eth) {
     return { provider: null, wallets: [{ uuid: 'fallback', name: 'Browser Wallet', icon: '', provider: eth }] };
